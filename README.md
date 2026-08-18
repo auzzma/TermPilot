@@ -45,6 +45,10 @@ open dist/TermPilot.app
 
 Application data is stored in `~/Library/Application Support/TermPilot/`. Workspace snapshots never contain terminal output, process state, or plaintext passwords.
 
+## Community
+
+Telegram: [https://t.me/Impart_Chat](https://t.me/Impart_Chat)
+
 ## License
 
 [GPL-3.0-or-later](LICENSE)

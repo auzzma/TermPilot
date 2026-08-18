@@ -45,6 +45,10 @@ open dist/TermPilot.app
 
 应用数据默认保存在 `~/Library/Application Support/TermPilot/`。工作区快照不会保存终端输出、进程状态或明文密码。
 
+## 交流群
+
+Telegram：[https://t.me/Impart_Chat](https://t.me/Impart_Chat)
+
 ## License
 
 [GPL-3.0-or-later](LICENSE)
