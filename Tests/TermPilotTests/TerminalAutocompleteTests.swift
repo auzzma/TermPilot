@@ -273,7 +273,7 @@ final class TerminalAutocompleteTests: XCTestCase {
             bytes: Array("g".utf8),
             renderedLine: "$ "
         )
-        try? await Task.sleep(nanoseconds: 120_000_000)
+        await waitForGhostText("it status", in: controller)
         XCTAssertEqual(controller.presentation.ghostText, "it status")
 
         _ = controller.process(
@@ -508,6 +508,19 @@ final class TerminalAutocompleteTests: XCTestCase {
 
     private func allowRemoteSuggestionTaskToRun() async {
         try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    private func waitForGhostText(
+        _ expected: String,
+        in controller: TerminalAutocompleteController,
+        timeout: TimeInterval = 1
+    ) async {
+        let deadline = Date().addingTimeInterval(timeout)
+        while controller.presentation.ghostText != expected,
+              Date() < deadline
+        {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 
     private func contrastRatio(
