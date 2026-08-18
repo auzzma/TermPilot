@@ -3803,7 +3803,7 @@ final class AppState: ObservableObject {
 
     private func observeVaultChanges() {
         vaultChangeTask?.cancel()
-        vaultChangeTask = Task { [weak self] in
+        vaultChangeTask = Task { @MainActor [weak self] in
             let notifications = NotificationCenter.default.notifications(
                 named: .termPilotVaultDidChange
             )

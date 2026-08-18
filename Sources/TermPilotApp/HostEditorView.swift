@@ -581,6 +581,8 @@ private final class HostEditorOutsideClickView: NSView {
     }
 
     deinit {
-        stopMonitoring()
+        MainActor.assumeIsolated {
+            stopMonitoring()
+        }
     }
 }
