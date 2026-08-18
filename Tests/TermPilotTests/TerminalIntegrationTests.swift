@@ -127,7 +127,7 @@ final class TerminalIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testTerminalCursorAndSelectionColorsMatchOriginalTheme() throws {
+    func testTerminalCursorAndSelectionColorsMatchCurrentTheme() throws {
         let runtime = TerminalSessionRuntime(
             descriptor: SessionDescriptor.local(shell: "/bin/zsh"),
             launchConfiguration: LocalShellLaunch.configuration(
@@ -138,25 +138,49 @@ final class TerminalIntegrationTests: XCTestCase {
             startOnDisplay: false
         )
         let terminalView = runtime.view()
+        let appearance = terminalView.effectiveAppearance
+        let isDark = appearance.bestMatch(
+            from: [.darkAqua, .aqua]
+        ) == .darkAqua
+        let expected: (
+            caret: (red: CGFloat, green: CGFloat, blue: CGFloat),
+            selectionBackground: (red: CGFloat, green: CGFloat, blue: CGFloat),
+            selectionForeground: (red: CGFloat, green: CGFloat, blue: CGFloat)
+        )
+        if isDark {
+            expected = (
+                caret: (88, 166, 255),
+                selectionBackground: (38, 79, 120),
+                selectionForeground: (201, 209, 217)
+            )
+        } else {
+            expected = (
+                caret: (9, 105, 218),
+                selectionBackground: (178, 209, 255),
+                selectionForeground: (36, 41, 47)
+            )
+        }
 
-        assertColor(
-            terminalView.caretColor,
-            red: 88,
-            green: 166,
-            blue: 255
-        )
-        assertColor(
-            terminalView.selectedTextBackgroundColor,
-            red: 38,
-            green: 79,
-            blue: 120
-        )
-        assertColor(
-            terminalView.selectedTextForegroundColor,
-            red: 201,
-            green: 209,
-            blue: 217
-        )
+        appearance.performAsCurrentDrawingAppearance {
+            assertColor(
+                terminalView.caretColor,
+                red: expected.caret.red,
+                green: expected.caret.green,
+                blue: expected.caret.blue
+            )
+            assertColor(
+                terminalView.selectedTextBackgroundColor,
+                red: expected.selectionBackground.red,
+                green: expected.selectionBackground.green,
+                blue: expected.selectionBackground.blue
+            )
+            assertColor(
+                terminalView.selectedTextForegroundColor,
+                red: expected.selectionForeground.red,
+                green: expected.selectionForeground.green,
+                blue: expected.selectionForeground.blue
+            )
+        }
     }
 
     @MainActor
