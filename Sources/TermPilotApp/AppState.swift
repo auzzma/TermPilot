@@ -3806,7 +3806,7 @@ final class AppState: ObservableObject {
         vaultChangeTask = Task { @MainActor [weak self] in
             let notifications = NotificationCenter.default.notifications(
                 named: .termPilotVaultDidChange
-            )
+            ).map { _ in () }
             for await _ in notifications {
                 guard !Task.isCancelled else {
                     return
