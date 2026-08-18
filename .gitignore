@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Swift build output
+.build/
+.build-arm64/
+.build-x86_64/
+.swiftpm/
+DerivedData/
+dist/
+
+# Bundled and downloaded runtimes
+Vendor/ssh2-bridge-runtime/
+.runtime-cache/
+.build-swift-sftp-save
+
+# Local diagnostics and configuration
+.dbg/
+.env
+.env.*
+!.env.example
+*.log
+
+# Signing credentials
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+
+# Xcode user state
+*.xcuserstate
+*.xccheckout
+xcuserdata/
