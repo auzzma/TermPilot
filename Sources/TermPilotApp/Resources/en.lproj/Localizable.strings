@@ -220,6 +220,8 @@
 "Choose Folder" = "Choose Folder";
 "Upload..." = "Upload...";
 "Upload" = "Upload";
+"Release to upload" = "Release to upload";
+"Drop files here to upload" = "Drop files here to upload";
 "Download" = "Download";
 "View/Edit" = "View/Edit";
 "Chmod" = "Chmod";

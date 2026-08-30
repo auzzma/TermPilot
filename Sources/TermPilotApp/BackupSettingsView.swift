@@ -144,14 +144,15 @@ private struct BackupPasswordSheet: View {
                 }
             }
 
-            SecureField("Backup Password", text: $password)
-                .textFieldStyle(.roundedBorder)
+            RevealablePasswordField(
+                AppLocalization.string("Backup Password"),
+                text: $password
+            )
             if operation.requiresConfirmation {
-                SecureField(
-                    "Confirm Backup Password",
+                RevealablePasswordField(
+                    AppLocalization.string("Confirm Backup Password"),
                     text: $confirmation
                 )
-                .textFieldStyle(.roundedBorder)
             }
             Text("Use at least 8 characters. The password cannot be recovered.")
                 .font(.caption)

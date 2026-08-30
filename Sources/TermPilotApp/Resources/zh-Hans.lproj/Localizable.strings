@@ -220,6 +220,8 @@
 "Choose Folder" = "选择文件夹";
 "Upload..." = "上传...";
 "Upload" = "上传";
+"Release to upload" = "释放以上传";
+"Drop files here to upload" = "将文件拖放到此处上传";
 "Download" = "下载";
 "View/Edit" = "查看/编辑";
 "Chmod" = "权限";

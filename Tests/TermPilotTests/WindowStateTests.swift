@@ -1540,6 +1540,136 @@ final class WindowStateTests: XCTestCase {
         )
     }
 
+    func testTerminalSidePanelRetargetsForDifferentSSHConnection() {
+        let host = Fixtures.host()
+        let connectionID = UUID()
+        let source = SessionDescriptor.ssh(
+            host: host,
+            connectionID: connectionID
+        )
+        let sibling = SessionDescriptor.ssh(
+            host: host,
+            connectionID: connectionID
+        )
+        let independent = SessionDescriptor.ssh(
+            host: host,
+            connectionID: UUID()
+        )
+
+        XCTAssertFalse(
+            AppState.terminalSidePanelShouldRetarget(
+                from: source,
+                to: sibling
+            )
+        )
+        XCTAssertTrue(
+            AppState.terminalSidePanelShouldRetarget(
+                from: source,
+                to: independent
+            )
+        )
+        XCTAssertTrue(
+            AppState.terminalSidePanelShouldRetarget(
+                from: nil,
+                to: independent
+            )
+        )
+    }
+
+    @MainActor
+    func testReconnectReleasesCachedServerToolsExecClient() async throws {
+        let client = try makeNoNetworkBridgeClient()
+        defer { Task { await client.close() } }
+
+        let state = AppState()
+        let host = Fixtures.host()
+        let connectionID = UUID()
+        let descriptor = SessionDescriptor.ssh(
+            host: host,
+            connectionID: connectionID
+        )
+        state.openWorkspaceForTesting(host: host, descriptor: descriptor)
+        let workspace = try XCTUnwrap(state.activeWorkspace)
+        state.openTerminalSidePanel(
+            in: workspace.id,
+            for: descriptor.id,
+            tab: .sftp
+        )
+
+        state.seedServerToolsExecClientForTesting(
+            in: workspace.id,
+            host: host,
+            connectionID: connectionID,
+            client: client
+        )
+        XCTAssertTrue(
+            state.hasCachedServerToolsExecClientForTesting(in: workspace.id)
+        )
+
+        // A reconnect on an unrelated connection must not release the cache.
+        let unrelated = SessionDescriptor.ssh(host: host, connectionID: UUID())
+        state.invalidateSFTPConnectionsForTesting(sharing: unrelated)
+        XCTAssertTrue(
+            state.hasCachedServerToolsExecClientForTesting(in: workspace.id),
+            "Unrelated reconnect should not evict the exec client."
+        )
+
+        // Reconnecting the shared connection must release the stale client so
+        // the next probe rebuilds it instead of reusing a dead connection.
+        state.invalidateSFTPConnectionsForTesting(sharing: descriptor)
+        XCTAssertFalse(
+            state.hasCachedServerToolsExecClientForTesting(in: workspace.id),
+            "Shared-connection reconnect should evict the stale exec client."
+        )
+    }
+
+    @MainActor
+    private func makeNoNetworkBridgeClient() throws -> SSH2SFTPBridgeClient {
+        let pathDirectories = ProcessInfo.processInfo.environment["PATH"]?
+            .split(separator: ":")
+            .map(String.init) ?? []
+        guard let nodePath = pathDirectories
+            .map({ URL(fileURLWithPath: $0).appendingPathComponent("node") })
+            .first(where: {
+                FileManager.default.isExecutableFile(atPath: $0.path)
+            })
+        else {
+            throw XCTSkip("Node runtime is unavailable.")
+        }
+
+        let root = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bridge = root.appendingPathComponent("bridge.cjs")
+        let modules = root.appendingPathComponent(
+            "node_modules",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: modules,
+            withIntermediateDirectories: true
+        )
+        try Data(
+            """
+            process.stdout.write('{"id":0,"event":"ready"}\\n');
+            setTimeout(() => process.exit(0), 50);
+            """.utf8
+        ).write(to: bridge)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        return try SSH2SFTPBridgeClient(
+            host: Fixtures.host(),
+            bridgeScript: bridge,
+            runtime: SSH2BridgeRuntime(
+                nodeExecutable: nodePath,
+                nodeModulesDirectory: modules
+            ),
+            opensFileChannel: false,
+            inheritedEnvironment: [:]
+        )
+    }
+
     @MainActor
     func testSFTPBrowserShowsHiddenEntriesByDefault() {
         let defaults = UserDefaults.standard
@@ -1575,6 +1705,27 @@ final class WindowStateTests: XCTestCase {
         XCTAssertEqual(
             model.localPath.standardizedFileURL,
             expected.standardizedFileURL
+        )
+    }
+
+    @MainActor
+    func testSFTPDropDestinationUsesCapturedRemoteDirectory() {
+        let model = SFTPBrowserModel(host: Fixtures.host())
+        model.remotePathText = "/incoming"
+        let capturedDirectory = model.remotePathText
+
+        model.remotePathText = "/archive"
+
+        XCTAssertEqual(
+            model.remotePath(
+                for: "payload.bin",
+                in: capturedDirectory
+            ),
+            "/incoming/payload.bin"
+        )
+        XCTAssertEqual(
+            model.remotePath(for: "payload.bin"),
+            "/archive/payload.bin"
         )
     }
 

@@ -601,15 +601,31 @@ struct SFTPBrowserView: View {
                 {
                     remoteErrorState(errorMessage)
                 }
+                if model.isRemoteDropTargeted {
+                    remoteDropHighlight
+                }
             }
-            .onDrop(of: [.fileURL], isTargeted: $model.isRemoteDropTargeted) {
-                providers in
-                model.acceptLocalFileDrop(providers, using: state)
+            .overlay {
+                // A transparent layer above the List so file drops are not
+                // swallowed by the underlying NSTableView. Without a content
+                // shape it stays click-through, keeping row selection intact.
+                Color.clear
+                    .onDrop(
+                        of: [.fileURL],
+                        isTargeted: $model.isRemoteDropTargeted
+                    ) { providers in
+                        model.acceptLocalFileDrop(providers, using: state)
+                    }
             }
             if isSidebar {
                 remoteSidebarFooter
             } else {
                 HStack {
+                    Button {
+                        model.chooseFilesToUpload(using: state)
+                    } label: {
+                        Label("Upload...", systemImage: "arrow.up.circle")
+                    }
                     Button {
                         Task {
                             await model.downloadSelectedRemote(using: state)
@@ -889,6 +905,29 @@ struct SFTPBrowserView: View {
         .shadow(radius: 8, y: 2)
     }
 
+    private var remoteDropHighlight: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .strokeBorder(
+                Color.accentColor,
+                style: StrokeStyle(lineWidth: 2, dash: [6])
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.accentColor.opacity(0.08))
+            )
+            .overlay {
+                Label(
+                    "Release to upload",
+                    systemImage: "tray.and.arrow.up"
+                )
+                .font(.headline)
+                .foregroundStyle(Color.accentColor)
+            }
+            .padding(8)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+    }
+
     private var remoteSidebarFooter: some View {
         HStack(spacing: 10) {
             Label(
@@ -898,6 +937,12 @@ struct SFTPBrowserView: View {
                 systemImage: "tray.and.arrow.up"
             )
             .foregroundStyle(model.isRemoteDropTargeted ? Color.accentColor : .secondary)
+            Button {
+                model.chooseFilesToUpload(using: state)
+            } label: {
+                Label("Upload...", systemImage: "arrow.up.circle")
+            }
+            .controlSize(.small)
             Spacer()
             Text("\(remoteVisibleCount) items")
             Text(model.remotePathText)
@@ -1974,6 +2019,7 @@ final class SFTPBrowserModel: ObservableObject {
         guard !providers.isEmpty else {
             return false
         }
+        let remoteDirectory = remotePathText
         let collector = SFTPDroppedURLCollector(count: providers.count)
         for (index, provider) in providers.enumerated() {
             provider.loadItem(
@@ -1991,7 +2037,11 @@ final class SFTPBrowserModel: ObservableObject {
                     return
                 }
                 Task { @MainActor in
-                    self.enqueueUploadBatch(urls, using: state)
+                    self.enqueueUploadBatch(
+                        urls,
+                        remoteDirectory: remoteDirectory,
+                        using: state
+                    )
                 }
             }
         }
@@ -2970,12 +3020,14 @@ final class SFTPBrowserModel: ObservableObject {
 
     private func enqueueUploadBatch(
         _ urls: [URL],
+        remoteDirectory: String? = nil,
         removesSourcesOnSuccess: Bool = false,
         using state: AppState
     ) {
         guard let client, !urls.isEmpty else {
             return
         }
+        let remoteDirectory = remoteDirectory ?? remotePathText
         let batchID = UUID()
         let candidates = urls.map { url in
             let values = try? url.resourceValues(
@@ -2986,7 +3038,10 @@ final class SFTPBrowserModel: ObservableObject {
             return SFTPUploadCandidate(
                 id: UUID(),
                 localURL: url,
-                remotePath: remotePath(for: url.lastPathComponent),
+                remotePath: remotePath(
+                    for: url.lastPathComponent,
+                    in: remoteDirectory
+                ),
                 size: values?.fileSize.map(UInt64.init)
             )
         }
@@ -3516,6 +3571,10 @@ final class SFTPBrowserModel: ObservableObject {
 
     func remotePath(for name: String) -> String {
         remoteJoin(remotePathText, name)
+    }
+
+    func remotePath(for name: String, in directory: String) -> String {
+        remoteJoin(directory, name)
     }
 
     private func remoteJoin(_ base: String, _ name: String) -> String {

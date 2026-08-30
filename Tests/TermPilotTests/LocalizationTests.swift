@@ -288,6 +288,23 @@ final class LocalizationTests: XCTestCase {
         }
     }
 
+    func testSFTPUploadControlsUseApplicationLanguageBundles() {
+        let chinese = AppResourceLocator.localizedBundle(
+            for: "zh-Hans"
+        )
+        let english = AppResourceLocator.localizedBundle(for: "en")
+        let expectedChinese = [
+            "Upload...": "上传...",
+            "Release to upload": "释放以上传",
+            "Drop files here to upload": "将文件拖放到此处上传",
+        ]
+
+        for (key, expected) in expectedChinese {
+            XCTAssertEqual(localized(key, in: chinese), expected)
+            XCTAssertEqual(localized(key, in: english), key)
+        }
+    }
+
     private func localized(
         _ key: String,
         in bundle: Bundle

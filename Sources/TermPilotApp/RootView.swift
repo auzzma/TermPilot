@@ -4174,11 +4174,10 @@ private struct QuickConnectView: View {
 
                     if authentication == .password {
                         formRow("Password") {
-                            SecureField(
+                            RevealablePasswordField(
                                 localized("Password"),
                                 text: $password
                             )
-                            .textFieldStyle(.roundedBorder)
                         }
                         Text(
                             verbatim: localized(
@@ -4217,11 +4216,10 @@ private struct QuickConnectView: View {
                             credentialTextEditor(text: $identityKey, height: 72)
                         }
                         formRow("Passphrase (optional)") {
-                            SecureField(
+                            RevealablePasswordField(
                                 localized("Passphrase (optional)"),
                                 text: $passphrase
                             )
-                            .textFieldStyle(.roundedBorder)
                         }
                         formRow("Public Key") {
                             credentialTextEditor(text: $publicKey, height: 48)
@@ -4272,6 +4270,7 @@ private struct QuickConnectView: View {
                 hostname: hostname,
                 username: username,
                 port: port,
+                credentialID: credentialID,
                 authentication: authentication,
                 password: password,
                 identityFile: trimmedIdentityFile,
@@ -4329,10 +4328,7 @@ private struct QuickConnectView: View {
     }
 
     private var trimmedElevationPassword: String? {
-        guard serverToolsMode != .disabled else {
-            return nil
-        }
-        return elevationPassword.isEmpty ? nil : elevationPassword
+        elevationPassword.isEmpty ? nil : elevationPassword
     }
 
     private var canConnect: Bool {
@@ -4376,11 +4372,10 @@ private struct QuickConnectView: View {
             }
 
             if serverToolsMode != .disabled {
-                SecureField(
+                RevealablePasswordField(
                     localized("Elevation Password"),
                     text: $elevationPassword
                 )
-                .textFieldStyle(.roundedBorder)
 
                 Text(
                     verbatim: localized(

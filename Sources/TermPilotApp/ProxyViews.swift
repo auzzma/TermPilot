@@ -108,15 +108,13 @@ struct ProxyConfigurationEditor: View {
 
                         Divider()
                         LabeledContent("Password") {
-                            SecureField(
+                            RevealablePasswordField(
                                 "",
                                 text: Binding(
                                     get: { configuration.password ?? "" },
                                     set: { configuration.password = $0 }
                                 )
                             )
-                            .multilineTextAlignment(.leading)
-                            .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 260)
                         }
                     }

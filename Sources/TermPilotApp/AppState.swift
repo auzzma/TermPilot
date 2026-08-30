@@ -502,6 +502,19 @@ final class AppState: ObservableObject {
         }
     }
 
+    nonisolated static func terminalSidePanelShouldRetarget(
+        from sourceDescriptor: SessionDescriptor?,
+        to targetDescriptor: SessionDescriptor
+    ) -> Bool {
+        guard let sourceDescriptor else {
+            return true
+        }
+        return !terminalSidePanelDescriptorsShareConnection(
+            sourceDescriptor,
+            targetDescriptor
+        )
+    }
+
     func terminalSidePanelTab(in workspaceID: UUID) -> TerminalSidePanelTab {
         workspaceSidePanelTabs[workspaceID] ?? .sftp
     }
@@ -665,6 +678,54 @@ final class AppState: ObservableObject {
             await entry.client.close()
         }
     }
+
+    #if DEBUG
+    /// Test seam: seed a cached server-tools exec client for `workspaceID` so
+    /// tests can assert whether reconnect releases it.
+    func seedServerToolsExecClientForTesting(
+        in workspaceID: UUID,
+        host: TermPilotDomain.Host,
+        connectionID: UUID?,
+        client: SSH2SFTPBridgeClient
+    ) {
+        workspaceServerToolsExecClients[workspaceID] =
+            WorkspaceServerToolsExecClient(
+                token: UUID(),
+                hostID: host.id,
+                connectionID: connectionID,
+                hostUpdatedAt: host.updatedAt,
+                elevationMethod: host.serverToolsElevationMethod,
+                client: client
+            )
+    }
+
+    /// Test seam: whether a server-tools exec client is cached for `workspaceID`.
+    func hasCachedServerToolsExecClientForTesting(
+        in workspaceID: UUID
+    ) -> Bool {
+        workspaceServerToolsExecClients[workspaceID] != nil
+    }
+
+    /// Test seam: invoke the private connection-invalidation path directly.
+    func invalidateSFTPConnectionsForTesting(
+        sharing descriptor: SessionDescriptor
+    ) {
+        invalidateSFTPConnections(sharing: descriptor)
+    }
+
+    /// Test seam: register a session and a single-session workspace without
+    /// spawning a real terminal runtime, so side-panel state can be exercised.
+    func openWorkspaceForTesting(
+        host: TermPilotDomain.Host,
+        descriptor: SessionDescriptor
+    ) {
+        sessions[descriptor.id] = descriptor
+        sessionHosts[descriptor.id] = host
+        let workspace = WorkspaceDocument.single(session: descriptor)
+        workspaces.append(workspace)
+        activeWorkspaceID = workspace.id
+    }
+    #endif
 
     private func releaseAllServerToolsExecClients() {
         let clients = workspaceServerToolsExecClients.values.map(\.client)
@@ -2587,6 +2648,10 @@ final class AppState: ObservableObject {
                 continue
             }
             workspaceSFTPModels[workspaceID]?.invalidateRemoteConnection()
+            // The cached server-tools exec client is bound to the old SSH
+            // connection. Release it so the next probe rebuilds it against the
+            // reconnected session instead of reusing a dead client.
+            releaseServerToolsExecClient(in: workspaceID)
         }
     }
 
@@ -2884,6 +2949,10 @@ final class AppState: ObservableObject {
         workspaces[index].root = workspaces[index].root.selectingTab(
             sessionID: sessionID
         )
+        retargetTerminalSidePanelIfNeeded(
+            in: workspaceID,
+            to: sessionID
+        )
         runtimes[sessionID]?.focus()
     }
 
@@ -2900,7 +2969,32 @@ final class AppState: ObservableObject {
         workspaces[index].root = workspaces[index].root.selectingTab(
             sessionID: sessionID
         )
+        retargetTerminalSidePanelIfNeeded(
+            in: workspaceID,
+            to: sessionID
+        )
         runtimes[sessionID]?.focus()
+    }
+
+    private func retargetTerminalSidePanelIfNeeded(
+        in workspaceID: UUID,
+        to sessionID: UUID
+    ) {
+        guard terminalSidePanelWorkspaceIDs.contains(workspaceID),
+              let targetDescriptor = sessions[sessionID],
+              Self.terminalSidePanelShouldRetarget(
+                  from: workspaceSidePanelSessionIDs[workspaceID]
+                      .flatMap { sessions[$0] },
+                  to: targetDescriptor
+              )
+        else {
+            return
+        }
+        openTerminalSidePanel(
+            in: workspaceID,
+            for: sessionID,
+            tab: terminalSidePanelTab(in: workspaceID)
+        )
     }
 
     func moveTerminalTab(

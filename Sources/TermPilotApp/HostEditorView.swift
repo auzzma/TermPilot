@@ -184,9 +184,7 @@ struct HostEditorView: View {
                 if host.authentication == .password {
                     Divider().padding(.vertical, 8)
                     formRow("Password") {
-                        SecureField("", text: $password)
-                            .textFieldStyle(.roundedBorder)
-                            .labelsHidden()
+                        RevealablePasswordField("", text: $password)
                     }
                 } else if host.authentication == .identityFile {
                     Divider().padding(.vertical, 8)
@@ -235,12 +233,10 @@ struct HostEditorView: View {
                     Text("sudo").tag(ServerToolsElevationMethod.sudo)
                     Text("su").tag(ServerToolsElevationMethod.su)
                 }
-                SecureField(localized("Elevation Password"), text: Binding(
+                RevealablePasswordField(localized("Elevation Password"), text: Binding(
                     get: { self.host.elevationPassword ?? "" },
                     set: { self.host.elevationPassword = $0.isEmpty ? nil : $0 }
                 ))
-                .textFieldStyle(.roundedBorder)
-                    .labelsHidden()
             }
         }
         .padding(16)
