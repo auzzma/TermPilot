@@ -86,7 +86,7 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none
           script: bash apps/android/gradlew --no-daemon -p apps/android connectedDebugAndroidTest
       - name: Prepare optional persistent Android signing key
         if: inputs.android_signed

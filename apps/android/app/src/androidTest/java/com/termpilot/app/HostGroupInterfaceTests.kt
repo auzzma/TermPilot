@@ -32,18 +32,13 @@ class HostGroupInterfaceTests {
             compose.onNodeWithTag("home-hosts").performClick()
             compose.onNodeWithTag("group-tree-leaf").assertDoesNotExist()
             compose.onNode(hasSetTextAction()).performTextInput("Database")
+            dismissKeyboard()
             compose.onNodeWithTag("group-tree-root").assertExists()
             compose.onNodeWithTag("group-tree-leaf").assertExists()
             compose.onNodeWithTag("host-tree-host").assertExists()
             compose.onNodeWithTag("host-loose-host").assertDoesNotExist()
             compose.onNode(hasSetTextAction()).performTextClearance()
-            compose.runOnIdle{
-                val activity=compose.activity
-                val keyboard=activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                keyboard.hideSoftInputFromWindow(activity.window.decorView.windowToken,0)
-                activity.currentFocus?.clearFocus()
-            }
-            compose.waitUntil(5000){compose.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())!=true}
+            dismissKeyboard()
             compose.onNodeWithTag("group-tree-leaf").assertDoesNotExist()
             compose.onNodeWithText("全部展开").performClick()
             compose.onNodeWithTag("group-tree-leaf").assertExists()
@@ -61,5 +56,15 @@ class HostGroupInterfaceTests {
         } finally {
             preferences.edit().putStringSet("collapsedHostGroups",saved).commit()
         }
+    }
+    private fun dismissKeyboard(){
+        compose.runOnIdle{
+            val activity=compose.activity
+            val keyboard=activity.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            keyboard.hideSoftInputFromWindow(activity.window.decorView.windowToken,0)
+            activity.currentFocus?.clearFocus()
+        }
+        compose.waitUntil(5000){compose.activity.window.decorView.rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime())!=true}
+        compose.waitForIdle()
     }
 }

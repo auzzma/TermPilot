@@ -67,6 +67,14 @@ import UIKit
     self.host = host
     protocolKind = kind
     terminalID = terminal
+    #if DEBUG
+    // UI tests exercise interaction, not the caret's repeating UIKit animation.
+    // Keep XCTest's idle/hit testing usable; release builds retain normal blinking.
+    if ProcessInfo.processInfo.environment["TERMPILOT_UI_TEST_STEADY_CURSOR"] == "1" {
+      terminalView.getTerminal().setCursorStyle(.steadyBlock)
+      terminalView.cursorStyleChanged(source: terminalView.getTerminal(), newStyle: .steadyBlock)
+    }
+    #endif
     terminalView.inputAccessoryView = TerminalKeyboardAccessory(session: self)
     terminalView.focusChanged = { [weak self] visible in
       guard let self, self.protocolKind == "ssh", self.keyboardVisible != visible else { return }

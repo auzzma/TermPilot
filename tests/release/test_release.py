@@ -218,18 +218,17 @@ class ReleaseTests(unittest.TestCase):
             release.archive(source, self.root / "out", "windows", "x64", "0.2.0")
         self.assertFalse((self.root / "out").exists())
 
-    def test_checksums_require_exactly_four_packages(self):
-        for platform in release.PLATFORMS:
-            for arch in release.ARCHITECTURES:
-                name = release.archive_name("0.2.0", platform, arch)
-                (self.root / name).write_bytes(name.encode())
+    def test_checksums_require_macos_arm64_and_both_windows_packages(self):
+        for platform, arch in (("macos", "arm64"), ("windows", "x64"), ("windows", "arm64")):
+            name = release.archive_name("0.2.0", platform, arch)
+            (self.root / name).write_bytes(name.encode())
         output = release.checksums(self.root, "0.2.0")
         lines = output.read_text().splitlines()
-        self.assertEqual(len(lines), 4)
+        self.assertEqual(len(lines), 3)
         for line in lines:
             digest, name = line.split("  ")
             self.assertEqual(digest, hashlib.sha256(name.encode()).hexdigest())
-        extra = self.root / "stale.zip"
+        extra = self.root / release.archive_name("0.2.0", "macos", "x64")
         extra.write_bytes(b"old")
         with self.assertRaisesRegex(ValueError, "extra"):
             release.checksums(self.root, "0.2.0")

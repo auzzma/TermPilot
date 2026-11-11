@@ -21,14 +21,15 @@ class InterfaceTests {
     private fun back(){compose.onAllNodes(hasContentDescription("返回") or hasContentDescription("取消")).onLast().performClick()}
     @Test fun dataSyncProviderForm(){
         settings();compose.onNodeWithText("数据同步").performScrollTo().performClick()
-        compose.waitUntil(15000){compose.onAllNodesWithText("云服务").fetchSemanticsNodes().isNotEmpty()}
-        compose.onNodeWithText("服务").performClick();compose.onNodeWithText("S3 / S3 Compatible").performClick()
+        compose.waitUntil(15000){compose.onAllNodesWithText("添加云服务").fetchSemanticsNodes().isNotEmpty()}
+        compose.onNodeWithText("添加云服务").performScrollTo().performClick()
+        compose.onNodeWithText("服务类型").performScrollTo().performClick();compose.onNodeWithText("S3 / S3 Compatible").performClick()
         compose.onNodeWithText("HTTPS Endpoint").assertExists()
-        compose.onNodeWithText("服务").performClick();compose.onNodeWithText("Cloudflare R2").performClick()
+        compose.onNodeWithText("服务类型").performScrollTo().performClick();compose.onNodeWithText("Cloudflare R2").performClick()
         compose.onNodeWithText("R2 S3 API Endpoint").assertExists()
         compose.onNodeWithText("Region").assertDoesNotExist()
         screenshot("data-sync-r2")
-        compose.onNodeWithText("服务").performClick();compose.onNodeWithText("WebDAV").performClick()
+        compose.onNodeWithText("服务类型").performScrollTo().performClick();compose.onNodeWithText("WebDAV").performClick()
         compose.onNodeWithText("认证方式").assertExists()
         compose.onNodeWithText("R2 S3 API Endpoint").assertDoesNotExist()
         screenshot("data-sync-form")
@@ -38,7 +39,7 @@ class InterfaceTests {
         compose.onAllNodesWithText("通用").onFirst().performClick();compose.onNodeWithText("外观").performClick()
         compose.onNodeWithText("浅色").performClick();compose.runOnIdle{assertTrue(androidx.core.view.WindowCompat.getInsetsController(compose.activity.window,compose.activity.window.decorView).isAppearanceLightStatusBars)};screenshot("appearance-light")
         compose.onNodeWithText("深色").performClick();back()
-        compose.onNodeWithText("终端").performClick();compose.onNodeWithText("快捷键栏").performClick()
+        compose.onNodeWithText("终端").performClick();compose.onNodeWithText("快捷键栏").performScrollTo().performClick()
         compose.onNodeWithText("Esc").assertIsDisplayed();screenshot("shortcuts");back();back()
         compose.onNodeWithText("远程桌面帧率上限").performClick();compose.onNodeWithText("30 FPS").performClick()
         compose.runOnIdle{assertEquals(30,compose.activity.mobileModel.fps)}

@@ -547,7 +547,9 @@ mod tests {
             "[Console]::Write('termpilot-local-exec')".to_string(),
             Some("powershell.exe".to_string()),
             None,
-            Some(5_000),
+            // This checks output and exit status, not cold PowerShell startup
+            // speed on a busy CI runner. The application's default is unchanged.
+            Some(60_000),
         )
         .expect("execute local command");
 

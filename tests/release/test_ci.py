@@ -14,6 +14,30 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('sign_ios', ROOT/'scripts/mobile/sign-ios.py')
 sign_ios = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sign_ios)
+spec = importlib.util.spec_from_file_location('simulators', ROOT/'scripts/mobile/select-ios-simulators.py')
+simulators = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(simulators)
+
+
+class IOSSimulatorSelectionTests(unittest.TestCase):
+    def test_runtime_supported_types_override_global_order_and_exclude_ipod(self):
+        def device(name, family):
+            return dict(name=name, productFamily=family, identifier='type.'+name)
+        phone, pad = device('iPhone fixture', 'iPhone'), device('iPad fixture', 'iPad')
+        ipod = device('iPod touch', 'iPhone')
+        runtime = dict(identifier='runtime.iOS-27-0', version='27.0', isAvailable=True,
+                       supportedDeviceTypes=[ipod, phone, pad])
+        state = dict(devicetypes=[phone, pad, ipod], runtimes=[runtime,
+                     dict(runtime, identifier='runtime.iOS-27-1', version='27.1'),
+                     dict(runtime, identifier='runtime.iOS-27-0-unavailable', isAvailable=False)])
+        identifier, selected = simulators.select_types(state, '27.0.0')
+        self.assertEqual(identifier, 'runtime.iOS-27-0')
+        self.assertEqual(selected, [phone, pad])
+        with self.assertRaisesRegex(ValueError, 'No compatible'):
+            simulators.select_types(state, '26.0')
+        runtime['supportedDeviceTypes'] = [ipod, pad]
+        with self.assertRaisesRegex(ValueError, 'No supported iPhone'):
+            simulators.select_types(state, '27.0')
 
 
 class SourcePolicyTests(unittest.TestCase):

@@ -56,6 +56,17 @@ def build_environment(environment=None, maps=None, windows=None):
         # MSVC accepts /pathmap only with deterministic compilation enabled;
         # otherwise it merely warns and silently retains the original paths.
         native.insert(0, '/experimental:deterministic')
+        # ring selects the GNU-style clang driver on Windows ARM64, while
+        # other dependencies use cl.exe. Translate only in Clang's documented
+        # driver override hook; MSVC keeps its original /pathmap flags. Regex
+        # replacement operates on whole arguments, including paths with spaces.
+        # Release objects also omit CodeView records of the compiler command
+        # and output filename, which /pathmap does not rewrite in Clang.
+        edits = r'x/experimental:deterministic s/^.pathmap:(.*)$/-ffile-prefix-map=\1/ +-g0'
+        overrides = env.get('CCC_OVERRIDE_OPTIONS', '#')
+        if edits not in overrides:
+            overrides = (overrides + ' ' + edits).strip()
+        env['CCC_OVERRIDE_OPTIONS'] = overrides
     for name in ('CFLAGS', 'CXXFLAGS'):
         value = env.get(name, '')
         for flag in native:
@@ -93,6 +104,7 @@ def main():
     if args == ['--environment']:
         keys = ['CARGO_ENCODED_RUSTFLAGS', 'CARGO_INCREMENTAL', 'CFLAGS', 'CXXFLAGS']
         if os.name == 'nt':
+            keys += ['CCC_OVERRIDE_OPTIONS']
             keys += [name + '_' + target for name in ('CFLAGS', 'CXXFLAGS')
                      for target in ('x86_64_pc_windows_msvc', 'aarch64_pc_windows_msvc')]
         print(json.dumps({key: env[key] for key in keys}))

@@ -1,9 +1,18 @@
 import XCTest
 
 final class InterfaceTests: XCTestCase {
+  override func setUpWithError() throws {
+    continueAfterFailure = false
+    XCUIDevice.shared.orientation = .portrait
+  }
+  override func tearDownWithError() throws {
+    XCUIApplication().terminate()
+    XCUIDevice.shared.orientation = .portrait
+  }
   func testHostEditorsAfterFailedQuickConnection() {
     XCUIDevice.shared.orientation = .landscapeLeft
     let app = XCUIApplication()
+    app.launchEnvironment["TERMPILOT_UI_TEST_STEADY_CURSOR"] = "1"
     app.launchArguments = ["-TermPilot.language", "zh-Hans", "-TermPilot.theme", "dark"]
     app.launch()
     XCTAssertTrue(app.buttons["home-quick"].waitForExistence(timeout: 15))
@@ -11,11 +20,15 @@ final class InterfaceTests: XCTestCase {
     let address = app.textFields["IP 地址 / 主机名"]
     XCTAssertTrue(address.waitForExistence(timeout: 5))
     address.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).tap()
-    address.typeText("127.0.0.1\n")
+    // A runner may have an SSH service on localhost. A reserved invalid hostname
+    // fails before host-key/authentication prompts or password-autofill dialogs.
+    address.typeText("example.invalid\n")
     app.navigationBars["快速连接"].buttons["连接"].tap()
     attach("after-quick-connect", app)
-    XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 15))
+    XCTAssertTrue(app.alerts.firstMatch.waitForExistence(timeout: 30), app.debugDescription)
     app.alerts.buttons["好"].tap()
+    let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.alerts.firstMatch)
+    XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed)
     app.buttons["session-back"].tap()
     XCTAssertTrue(app.buttons["home-quick"].waitForExistence(timeout: 5))
     app.buttons["home-quick"].tap()
@@ -73,7 +86,9 @@ final class InterfaceTests: XCTestCase {
     let app = launchChineseApp()
     app.buttons["settings-general"].tap()
     app.buttons.matching(NSPredicate(format:"label BEGINSWITH %@", "终端")).firstMatch.tap()
-    app.buttons.matching(NSPredicate(format:"label BEGINSWITH %@", "Apple 高性能视频编码")).firstMatch.tap()
+    let codec=app.buttons.matching(NSPredicate(format:"label BEGINSWITH %@", "Apple 高性能视频编码")).firstMatch
+    for _ in 0..<4 {if codec.isHittable {break};app.swipeUp()}
+    codec.tap()
     XCTAssertTrue(app.buttons["H.264"].exists)
     app.buttons["H.265"].tap()
     attach("video-codec-h265", app)
@@ -137,8 +152,17 @@ final class InterfaceTests: XCTestCase {
     let sync=app.buttons.matching(NSPredicate(format:"label CONTAINS %@", "数据同步")).firstMatch
     if !sync.isHittable {app.swipeUp()}
     XCTAssertTrue(sync.waitForExistence(timeout:5));sync.tap()
-    XCTAssertTrue(app.staticTexts["同步库"].firstMatch.waitForExistence(timeout:10))
-    XCTAssertTrue(app.secureTextFields["同步口令（至少 12 个字符）"].exists)
+    let add=app.buttons["添加云服务"].firstMatch
+    XCTAssertTrue(add.waitForExistence(timeout:10))
+    if !add.isHittable {app.swipeUp()}
+    add.tap()
+    XCTAssertTrue(app.textFields["配置名称"].waitForExistence(timeout:5))
+    let key=app.secureTextFields.matching(NSPredicate(format:
+      "label == %@ OR placeholderValue == %@", "同步 Key", "至少 12 个字符")).firstMatch
+    for _ in 0..<5 {if key.isHittable {break};app.swipeUp()}
+    XCTAssertTrue(key.exists, app.debugDescription)
+    let service=app.buttons.matching(NSPredicate(format:"label CONTAINS %@", "WebDAV")).firstMatch
+    for _ in 0..<5 {if service.isHittable {break};app.swipeDown()}
     app.buttons.matching(NSPredicate(format:"label CONTAINS %@", "WebDAV")).firstMatch.tap()
     app.buttons["Cloudflare R2"].firstMatch.tap()
     XCTAssertTrue(app.textFields["R2 S3 API Endpoint"].waitForExistence(timeout:5))

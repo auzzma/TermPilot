@@ -15,6 +15,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 PLATFORMS = ("macos", "windows")
 ARCHITECTURES = ("x64", "arm64")
+RELEASE_TARGETS = (("macos", "arm64"), ("windows", "x64"), ("windows", "arm64"))
 
 
 def valid_version(value):
@@ -173,10 +174,10 @@ def archive(source, output, platform, arch, version):
 
 def checksums(directory, version):
     expected = {archive_name(version, platform, arch)
-                for platform in PLATFORMS for arch in ARCHITECTURES}
+                for platform, arch in RELEASE_TARGETS}
     actual = {path.name for path in directory.glob("*.zip")}
     if actual != expected:
-        raise ValueError(f"Expected four release archives; missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
+        raise ValueError(f"Expected three release archives; missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
     lines = []
     for name in sorted(expected):
         with (directory / name).open("rb") as handle:
