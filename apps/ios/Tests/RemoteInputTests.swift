@@ -10,6 +10,18 @@ final class RemoteInputTests: XCTestCase {
   @MainActor private func descendants(_ view: UIView) -> [UIView] {
     [view] + view.subviews.flatMap { descendants($0) }
   }
+  @MainActor private func waitForUI(
+    _ message: String, file: StaticString = #filePath, line: UInt = #line,
+    until condition: @MainActor () -> Bool
+  ) async throws {
+    // SwiftUI updates and UIKit focus changes span separate main-run-loop turns.
+    // Observe completion instead of assuming a loaded simulator finishes in 150 ms.
+    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+    while !condition() && ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    _ = try XCTUnwrap(condition() ? true : nil, message, file: file, line: line)
+  }
   @MainActor func testCommittedIMETextReturnAndBackspaceGoDirectlyToRemote() async throws {
     let window = try window(), original = window.rootViewController
     defer { window.rootViewController = original }
@@ -47,9 +59,15 @@ final class RemoteInputTests: XCTestCase {
     for (kind, mode) in [("rdp", ""), ("screen", "standardVNC"), ("screen", "highPerformance")] {
       let model = AppModel()
       let session = MobileSession(id: 900, host: ["label": "Remote UI fixture", "mode": mode], kind: kind, terminal: "")
+      defer { session.dismissKeyboard() }
+      let context = "\(kind)/\(mode)"
       let root = UIHostingController(rootView: WorkspaceView(session: session).environmentObject(model).environment(\.locale, Locale(identifier: "zh-Hans")).preferredColorScheme(.dark))
       window.rootViewController = root; window.makeKeyAndVisible()
-      try await Task.sleep(for: .milliseconds(200))
+      try await waitForUI("\(context): remote input and canvas must be mounted") {
+        let views = self.descendants(root.view)
+        return views.contains { $0 is RemoteKeyboard.InputView && $0.window === window }
+          && views.contains { $0 is RemoteCanvas && $0.window === window && !$0.bounds.isEmpty }
+      }
       let input = try XCTUnwrap(descendants(root.view).compactMap { $0 as? RemoteKeyboard.InputView }.first)
       let canvas = try XCTUnwrap(descendants(root.view).compactMap { $0 as? RemoteCanvas }.first)
       XCTAssertTrue(canvas.isUserInteractionEnabled, "The Metal desktop must receive touch and keyboard-dismiss gestures")
@@ -57,7 +75,7 @@ final class RemoteInputTests: XCTestCase {
       XCTAssertFalse(input.isFirstResponder)
       XCTAssertFalse(session.keyboardVisible)
       session.keyboardVisible = true
-      try await Task.sleep(for: .milliseconds(400))
+      try await waitForUI("\(context): keyboard must open") { input.isFirstResponder }
       XCTAssertTrue(input.isFirstResponder)
       XCTAssertNil(root.presentedViewController, "Keyboard must not present an input sheet")
       XCTAssertLessThanOrEqual(input.bounds.height, 1)
@@ -75,14 +93,15 @@ final class RemoteInputTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(200))
       XCTAssertFalse(input.isFirstResponder, "Dismissal must not reopen keyboard on the next SwiftUI update")
       session.keyboardVisible = true
-      try await Task.sleep(for: .milliseconds(250))
+      try await waitForUI("\(context): keyboard must reopen after outside dismissal") { input.isFirstResponder }
       XCTAssertTrue(input.isFirstResponder, "Keyboard must reopen after dismissing")
       input.resignFirstResponder()
       XCTAssertFalse(session.keyboardVisible, "System dismissal must update the toggle")
       session.keyboardVisible = true
-      try await Task.sleep(for: .milliseconds(250))
+      try await waitForUI("\(context): keyboard must reopen after system dismissal") { input.isFirstResponder }
+      XCTAssertTrue(input.isFirstResponder, "Verify focus before testing the next dismissal")
       session.keyboardVisible = false
-      try await Task.sleep(for: .milliseconds(150))
+      try await waitForUI("\(context): clearing the toggle must close the keyboard") { !input.isFirstResponder }
       XCTAssertFalse(input.isFirstResponder, "Second tap on keyboard must close it")
       XCTAssertNil(model.error)
     }
