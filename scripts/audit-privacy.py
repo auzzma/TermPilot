@@ -90,8 +90,38 @@ def scan_bytes(data, name, *, source=False, allow_development_signing=False, dep
     else:
         kinds = findings(data, name, source, allow_development_signing)
         if kinds:
-            result.append({'file': name, 'kinds': kinds})
+            finding = {'file': name, 'kinds': kinds}
+            if not source and 'absolute-user-directory' in kinds:
+                finding['userPathCategories'] = user_path_categories(data)
+            result.append(finding)
     return result
+
+
+def user_path_categories(data):
+    """Explain path origins without printing usernames or matched path text."""
+    categories = set()
+    home = str(Path.home()).replace('\\', '/').lower().rstrip('/') + '/'
+    for inspected in (data, data.replace(b'\x00', b'')):
+        for match in HOME_PATH.finditer(inspected):
+            prefix = match.group().decode('ascii', errors='replace').replace('\\', '/').lower()
+            origin = 'current-account' if prefix == home else 'other-account-or-spelling'
+            tail = inspected[match.end():match.end()+256].split(b'\x00', 1)[0].replace(b'\\', b'/')
+            if b'/pregenerated/' in tail and b'ring' in tail:
+                location = 'ring-preassembled-object'
+            elif b'libopus_sys-' in tail:
+                location = 'opus-source'
+            elif b'aws-lc-sys-' in tail:
+                location = 'aws-lc-source'
+            elif b'/registry/src/' in tail:
+                location = 'cargo-registry-source'
+            elif b'/git/checkouts/' in tail:
+                location = 'cargo-git-source'
+            elif b'.rustup/' in tail:
+                location = 'rust-toolchain'
+            else:
+                location = 'unclassified'
+            categories.add(origin + ':' + location)
+    return sorted(categories)
 
 
 def scan(path, **options):

@@ -146,6 +146,16 @@ class PrivacyTests(unittest.TestCase):
         self.assertIn('absolute-user-directory', audit.findings(
             b'/Users/fixture/source.rs', 'program', allow_development_signing=True))
 
+    def test_path_diagnostics_never_print_accounts_or_matched_paths(self):
+        private = 'C:\\Users\\fixture\\.cargo\\registry\\src\\example\\libopus_sys-0.3.3\\opus\\private.c'
+        for encoding in ('utf-8', 'utf-16-le'):
+            result = audit.scan_bytes(private.encode(encoding), 'program.exe')
+            self.assertEqual(result[0]['userPathCategories'], ['other-account-or-spelling:opus-source'])
+            serialized = json.dumps(result)
+            self.assertNotIn('fixture', serialized)
+            self.assertNotIn('private.c', serialized)
+            self.assertIn('absolute-user-directory', result[0]['kinds'])
+
     def test_source_audit_detects_another_build_accounts_path(self):
         path = ('/' + 'Users/' + 'another-builder/source.rs').encode()
         self.assertIn('absolute-user-directory', audit.findings(path, 'src/main.rs', source=True))

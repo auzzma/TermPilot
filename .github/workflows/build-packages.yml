@@ -76,6 +76,15 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Use an anonymous Windows dependency directory
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          # Native dependencies may canonicalize/shorten paths before embedding
+          # them. Keep their source files outside the runner's user profile too.
+          $cargoHome = Join-Path $env:RUNNER_TEMP 'termpilot-cargo'
+          New-Item -ItemType Directory -Path $cargoHome -Force | Out-Null
+          "CARGO_HOME=$cargoHome" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1-${{ matrix.rust-host }}
