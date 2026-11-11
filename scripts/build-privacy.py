@@ -56,13 +56,18 @@ def build_environment(environment=None, maps=None, windows=None):
         # MSVC accepts /pathmap only with deterministic compilation enabled;
         # otherwise it merely warns and silently retains the original paths.
         native.insert(0, '/experimental:deterministic')
-        # ring selects the GNU-style clang driver on Windows ARM64, while
-        # other dependencies use cl.exe. Translate only in Clang's documented
-        # driver override hook; MSVC keeps its original /pathmap flags. Regex
-        # replacement operates on whole arguments, including paths with spaces.
-        # Release objects also omit CodeView records of the compiler command
-        # and output filename, which /pathmap does not rewrite in Clang.
-        edits = r'x/experimental:deterministic s/^.pathmap:(.*)$/-ffile-prefix-map=\1/ +-g0'
+        # ring uses clang, aws-lc uses clang-cl, and other dependencies use
+        # MSVC. Both Clang drivers accept joined -Xclang frontend options;
+        # ordinary GNU -ffile-prefix-map/-g0 flags are not clang-cl options.
+        # MSVC ignores this hook and keeps its original /pathmap flags.
+        # Remove cc-rs/CMake debug flags to omit CodeView command/output paths.
+        # Regex replacement preserves each whole path, including spaces.
+        edits = r'x/experimental:deterministic s/^.pathmap:(.*)$/-Xclang=-fmacro-prefix-map=\1/'
+        debug_flags = ('-g', '-g0', '-g1', '-g2', '-g3', '-gcodeview',
+                       '-gline-tables-only', '-gline-directives-only',
+                       '-gdwarf-2', '-gdwarf-3', '-gdwarf-4', '-gdwarf-5',
+                       '/Z7', '-Z7', '/Zi', '-Zi', '/ZI', '-ZI')
+        edits += ' ' + ' '.join('x' + flag for flag in debug_flags)
         overrides = env.get('CCC_OVERRIDE_OPTIONS', '#')
         if edits not in overrides:
             overrides = (overrides + ' ' + edits).strip()

@@ -59,24 +59,36 @@ class PrivacyTests(unittest.TestCase):
         env['CFLAGS'] = '/std:c11'
         self.assertIn('/pathmap:', env['CFLAGS_x86_64_pc_windows_msvc'])
 
-    @unittest.skipUnless(shutil.which('clang'), 'Clang required for Windows ARM64 compiler probe')
-    def test_windows_arm64_clang_accepts_msvc_maps_and_removes_source_paths(self):
-        # Exercise the same GNU driver ring selects, with spaces and real
-        # Windows COFF output. A string-only assertion misses driver errors.
+    @unittest.skipUnless(shutil.which('clang'), 'Clang required for Windows compiler probes')
+    def test_windows_clang_and_clang_cl_accept_maps_and_remove_source_paths(self):
+        # Exercise ring's GNU driver AND aws-lc's CL driver, both architectures,
+        # paths with spaces, and real COFF output. Reject ignored flags too.
         with tempfile.TemporaryDirectory(prefix='private clang fixture ') as folder:
             root = Path(folder)
             source = root / 'probe.c'
             source.write_text('const char *source_path = __FILE__;\n', encoding='utf-8')
             output = root / 'probe.obj'
             env = build.build_environment(os.environ, [(root.as_posix(), '/build/fixture')], windows=True)
-            flags = shlex.split(env['CFLAGS_aarch64_pc_windows_msvc'])
-            result = subprocess.run(['clang', '--target=aarch64-pc-windows-msvc', '-g',
-                                     *flags, '-c', source.as_posix(), '-o', str(output)],
-                                    cwd=root, env=env, capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            data = output.read_bytes().replace(b'\\', b'/')
-            self.assertIn(b'/build/fixture/probe.c', data)
-            self.assertNotIn(root.as_posix().encode(), data)
+            for arch in ('aarch64', 'x86_64'):
+                flags = shlex.split(env['CFLAGS_' + arch + '_pc_windows_msvc'])
+                for mode, debug_options in (
+                    ('gcc', [('-g', '-gcodeview'), ('-g1',), ('-gline-directives-only',), ('-gdwarf-4',)]),
+                    ('cl', [('/Z7',), ('-Z7',), ('/Zi',), ('/ZI',)]),
+                ):
+                    for debug in debug_options:
+                        with self.subTest(arch=arch, driver=mode, debug=debug):
+                            compile_args = (['/c', source.as_posix(), '/Fo' + str(output)]
+                                            if mode == 'cl' else
+                                            ['-c', source.as_posix(), '-o', str(output)])
+                            result = subprocess.run([
+                                'clang', '--driver-mode=' + mode,
+                                '--target=' + arch + '-pc-windows-msvc', '-Werror',
+                                *debug, *flags, *compile_args,
+                            ], cwd=root, env=env, capture_output=True, text=True)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            data = output.read_bytes().replace(b'\\', b'/')
+                            self.assertIn(b'/build/fixture/probe.c', data)
+                            self.assertNotIn(root.as_posix().encode(), data)
 
     def test_nested_source_and_wide_paths_are_checked(self):
         with tempfile.TemporaryDirectory() as folder:
