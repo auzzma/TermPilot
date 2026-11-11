@@ -115,7 +115,7 @@ jobs:
           retention-days: 14
 
   apple:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: '2'

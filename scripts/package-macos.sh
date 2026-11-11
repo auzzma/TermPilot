@@ -14,10 +14,10 @@ print(app)
 PY
 )"
 IDENTITY="${SIGNING_IDENTITY:--}"
-ARCH="$(uname -m)"
+ARCH="${TERMPILOT_MACOS_ARCH:-$(uname -m)}"
 case "$ARCH" in arm64|x86_64) ;; *) echo 'Unsupported macOS architecture' >&2; exit 2 ;; esac
 bash "$ROOT/scripts/build-macos.sh"
-BIN="$(cd "$MAC" && swift build --build-system native -c release --show-bin-path)"
+BIN="$(cd "$MAC" && swift build --build-system native --arch "$ARCH" -c release --show-bin-path)"
 python3 "$ROOT/scripts/verify-independence.py"
 mkdir -p "$ROOT/dist" "$MAC/dist"
 python3 "$ROOT/scripts/package-source.py" "$MAC/dist/TermPilot-CorrespondingSource.tar.gz"
