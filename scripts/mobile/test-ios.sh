@@ -15,9 +15,16 @@ cleanup() {
 trap cleanup EXIT
 python3 scripts/mobile/select-ios-simulators.py "$selection"
 while IFS= read -r device; do
+  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    xcrun simctl boot "$device"
+    xcrun simctl bootstatus "$device" -b
+  fi
   python3 scripts/build-privacy.py xcodebuild -project apps/ios/TermPilot.xcodeproj -scheme TermPilot \
     -configuration Release -destination "platform=iOS Simulator,id=$device" \
-    -destination-timeout 120 -collect-test-diagnostics never \
+    -destination-timeout 120 -collect-test-diagnostics never -parallel-testing-enabled NO \
     -derivedDataPath apps/ios/.derived CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
     ENABLE_TESTABILITY=YES 'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) DEBUG' ARCHS=arm64 test "$@"
+  if [[ "${GITHUB_ACTIONS:-}" == true ]]; then
+    xcrun simctl shutdown "$device"
+  fi
 done < "$selection/devices"

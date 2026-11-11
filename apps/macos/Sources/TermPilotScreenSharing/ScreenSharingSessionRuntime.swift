@@ -595,6 +595,16 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
         case "clipboardUnsupported": clipboardSync.rejectUnsupportedText()
         case "mediaDiagnostics": videoDiagnostics.media = event.mediaDiagnostics
         case "mediaTransport": mediaBrokerProcessID = event.brokerPID
+        case "sessionRecovery":
+            guard !isStandardVNC, !isRDP else { return }
+            if event.stage == "renegotiate" {
+                releaseInput()
+                status = "Recovering Screen Sharing"
+                connectionDiagnostics = "stage=sessionRecovery"
+            } else if event.stage == "recovered" {
+                status = ""
+                connectionDiagnostics = "stage=video"
+            }
         case "performance":
             performanceMeter.receiveTraffic(received: event.receiveBytesPerSecond,
                 sent: event.sendBytesPerSecond, now: ProcessInfo.processInfo.systemUptime)
@@ -611,6 +621,7 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
         case "error":
             if isRDP { disconnect(); fail(event.message ?? event.code ?? "RDP 连接失败"); return }
             if event.code == "mediaBrokerDisconnected", recoverMediaService() { return }
+            if event.code == "sessionVideoRecoveryFailed", recoverMediaService(reason: "sessionRecovery") { return }
             let safeCode = (event.code ?? "unknown").filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }.prefix(80)
             connectionDiagnostics += "; code=\(safeCode)"
             let message: String
@@ -619,6 +630,7 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
             case "screenSessionAlreadyActive": message = "A high-performance connection to this Mac is already active. Open that session or disconnect it before reconnecting."
             case "legacyScreenSessionActive": message = "An older TermPilot screen-sharing session is active. Disconnect that session and retry."
             case "mediaBrokerDisconnected": message = "The shared screen-sharing service stopped. Reconnect this session."
+            case "sessionVideoRecoveryFailed": message = "Video did not resume after the remote session changed. Check the remote sharing service."
             case "mediaBrokerUnavailable": message = "The shared screen-sharing service could not start. Reopen TermPilot and retry."
             case "mediaBrokerVersion": message = "The screen-sharing service version does not match. Close all TermPilot screen-sharing sessions and retry."
             case "udpPortsInUse": message = "UDP media ports are in use. Disconnect the system Screen Sharing session or another remote desktop viewer, then retry."

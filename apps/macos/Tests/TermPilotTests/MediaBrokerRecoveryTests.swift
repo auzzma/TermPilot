@@ -6,23 +6,29 @@ import TermPilotPersistence
 import TermPilotScreenSharing
 
 final class MediaBrokerRecoveryTests: XCTestCase {
-    private func fixture(alwaysFail: Bool) throws -> (URL, ScreenSharingEngineLaunch) {
+    private func fixture(alwaysFail: Bool, code: String = "mediaBrokerDisconnected") throws -> (URL, ScreenSharingEngineLaunch) {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TermPilot-media-recovery-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let helper = directory.appendingPathComponent("engine.py")
         let script = """
         #!/usr/bin/python3
-        import sys,json,struct,pathlib
+        import sys,json,struct,pathlib,time
         config=json.loads(sys.stdin.buffer.readline())
         path=pathlib.Path(__file__).with_name('attempts')
         attempts=int(path.read_text())+1 if path.exists() else 1
         path.write_text(str(attempts))
-        def emit(event):
-            raw=json.dumps(dict(payloadLength=0,**event)).encode()
-            sys.stdout.buffer.write(struct.pack('>I',len(raw))+raw)
+        def emit(event,data=b''):
+            raw=json.dumps(dict(payloadLength=len(data),**event)).encode()
+            sys.stdout.buffer.write(struct.pack('>I',len(raw))+raw+data)
             sys.stdout.buffer.flush()
         if \(alwaysFail ? "True" : "False") or attempts==1:
-            emit(dict(kind='error',code='mediaBrokerDisconnected'))
+            if '\(code)'=='sessionVideoRecoveryFailed':
+                emit(dict(kind='connected',width=1,height=1,tiles=1))
+                emit(dict(kind='frame',tile=0,width=1,height=1,yStride=1,uvStride=1,
+                    chromaWidth=1,chromaHeight=1,biplanar=False,yLength=1,uLength=1,vLength=1),bytes([128]*3))
+                time.sleep(.1)
+                emit(dict(kind='sessionRecovery',stage='renegotiate'))
+            emit(dict(kind='error',code='\(code)'))
             sys.exit(1)
         emit(dict(kind='connected',width=1920,height=1080,tiles=1))
         for line in sys.stdin.buffer:
@@ -58,6 +64,29 @@ final class MediaBrokerRecoveryTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("attempts"), encoding: .utf8), "2")
         XCTAssertEqual(runtime.desktopSize.width, 1920)
         state.disconnectScreenSharing(sessionID: runtime.descriptor.id)
+    }
+
+    @MainActor
+    func testFailedInPlaceSessionRecoveryAutomaticallyReconnects() async throws {
+        let (directory, launch) = try fixture(alwaysFail: false, code: "sessionVideoRecoveryFailed")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (state, runtime) = try await open(launch)
+        defer { state.disconnectScreenSharing(sessionID: runtime.descriptor.id) }
+        try await wait {
+            runtime.lifecycle == .connected &&
+                (try? String(contentsOf: directory.appendingPathComponent("attempts"), encoding: .utf8)) == "2"
+        }
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("attempts"), encoding: .utf8), "2")
+    }
+
+    @MainActor
+    func testSessionRecoveryFallbackHasABoundedBudget() async throws {
+        let (directory, launch) = try fixture(alwaysFail: true, code: "sessionVideoRecoveryFailed")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let (state, runtime) = try await open(launch)
+        defer { state.disconnectScreenSharing(sessionID: runtime.descriptor.id) }
+        try await wait { if case .failed = runtime.lifecycle { return true }; return false }
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("attempts"), encoding: .utf8), "3")
     }
 
     @MainActor

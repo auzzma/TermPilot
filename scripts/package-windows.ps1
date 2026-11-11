@@ -39,6 +39,18 @@ try {
     Copy-Item "$root/target/windows-media-$Architecture/runtime/termpilot-media.exe" "$payload/engine/"
     Get-ChildItem "$root/target/windows-media-$Architecture/runtime/*.dll" | Copy-Item -Destination "$payload/engine/"
     Copy-Item "$root/engines/rdp/target/release/termpilot-rdp.exe" "$payload/engine/termpilot-rdp.exe"
+    # ring ships preassembled COFF objects with its upstream builder's paths.
+    # Compiler prefix maps cannot rewrite existing debug/symbol records.
+    # Strip debug sections and COFF .file records from the unsigned executable; retain
+    # imports, exports, resources, executable code and unwind/relocation data.
+    $sysroot = rustc --print sysroot
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot locate Rust LLVM tools' }
+    $objcopy = "$sysroot/lib/rustlib/$target/bin/llvm-objcopy.exe"
+    if (-not (Test-Path $objcopy)) { throw 'Install release tools with: rustup component add llvm-tools-preview' }
+    & $objcopy --strip-debug --strip-symbol=.file "$payload/engine/termpilot-rdp.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot remove RDP debug metadata' }
+    python scripts/audit-privacy.py "$payload/engine/termpilot-rdp.exe"
+    if ($LASTEXITCODE -ne 0) { throw 'RDP engine privacy audit failed' }
     Copy-Item "$root/apps/windows/Assets/TermPilot.ico" "$payload/Assets/TermPilot.ico"
     Copy-Item "$root/apps/windows/public/AutocompleteSpecs.bundledata" "$payload/AutocompleteSpecs.bundledata"
     Copy-Item "$root/NOTICE.md" "$payload/NOTICE.md"

@@ -145,6 +145,7 @@ fn clipboard_text(packet: &[u8]) -> Result<Option<String>> {
     Ok(None)
 }
 pub struct Controls {
+    transition: Option<super::recovery::Transition>,
     display: offers::DisplayMode,
     tiles: u16,
     enabled: bool,
@@ -168,6 +169,7 @@ impl Controls {
     }
     pub fn for_display(display: offers::DisplayMode, tiles: u16) -> Self {
         Self {
+            transition: None,
             display,
             tiles,
             enabled: false,
@@ -182,6 +184,9 @@ impl Controls {
     }
     pub fn clipboard_in_progress(&self) -> bool {
         !self.clipboard.is_empty()
+    }
+    pub(super) fn take_transition(&mut self) -> Option<super::recovery::Transition> {
+        self.transition.take()
     }
     /// One credential character per IPC request. The client waits for the
     /// returned acknowledgement before sending another, so cancellation never
@@ -345,6 +350,9 @@ impl Controls {
         }
         match message.first().copied() {
             Some(0x14) => {
+                if message.len() == 8 && message[2..8] == [0, 4, 0, 1, 0, 11] {
+                    self.transition = Some(super::recovery::Transition::Session);
+                }
                 if message.len() >= 8 && message[6..8] == [0, 2] && self.enabled {
                     output
                         .emit(json!({"kind":"clipboardChanged"}), Vec::new())
@@ -385,9 +393,15 @@ impl Controls {
                             let h = u16::from_be_bytes(payload[8..10].try_into()?);
                             ensure!(
                                 w == 0 || h == 0 || self.display.accepts_encoded(w, h, self.tiles),
-                                "displayMode"
+                                // Lock/login can switch from the virtual display
+                                // to the console's geometry. The active decoder
+                                // and pointer mapping still use the negotiated
+                                // size, so rebuild the session with the requested
+                                // display instead of reporting an invalid preset.
+                                "sessionVideoRecoveryFailed"
                             );
                         }
+                        self.transition.get_or_insert(super::recovery::Transition::Layout);
                     }
                 }
                 -224 => break,
@@ -406,6 +420,51 @@ fn valid_credential_key(code: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn only_session_status_and_layout_arm_transition_recovery() -> Result<()> {
+        use super::super::recovery::Transition;
+        use std::sync::Arc;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let stream = tokio::net::TcpStream::connect(listener.local_addr()?).await?;
+        let (_peer, _) = listener.accept().await?;
+        let mut writer = Writer::test_writer(stream);
+        let (events, _events) = tokio::sync::mpsc::channel(16);
+        let (audio, _audio) = tokio::sync::mpsc::channel(1);
+        let output = Output { events, audio, video: Arc::default() };
+        let mut controls = Controls::new();
+        for cmd in [2, 4, 12] {
+            controls.message(&[0x14, 0, 0, 4, 0, 1, 0, cmd], &mut writer, &output).await?;
+            assert_eq!(controls.take_transition(), None);
+        }
+        controls.message(&[0x14, 0, 0, 4, 0, 1, 0, 11], &mut writer, &output).await?;
+        assert_eq!(controls.take_transition(), Some(Transition::Session));
+        assert_eq!(controls.take_transition(), None);
+        // A clipboard continuation may look exactly like a status message.
+        let mut clip = clipboard_send("fixture")?;
+        let split = clip.len() - 8;
+        controls.message(&clip[..split], &mut writer, &output).await?;
+        assert!(controls.message(&[0x14, 0, 0, 4, 0, 1, 0, 11], &mut writer, &output).await.is_err());
+        assert_eq!(controls.take_transition(), None);
+        clip.clear();
+        let mut controls = Controls::new();
+        let mut layout = vec![0, 0, 0, 1];
+        layout.extend([0; 8]); layout.extend(1105i32.to_be_bytes());
+        layout.extend(10u16.to_be_bytes()); layout.extend([0; 10]);
+        controls.message(&layout, &mut writer, &output).await?;
+        assert_eq!(controls.take_transition(), Some(Transition::Layout));
+        // A lock-screen layout can announce a different console size even
+        // after the requested virtual display was successfully negotiated.
+        // Trigger bounded session recovery, keeping initial preset validation.
+        layout[24..26].copy_from_slice(&1440u16.to_be_bytes());
+        layout[26..28].copy_from_slice(&900u16.to_be_bytes());
+        let error = controls.message(&layout, &mut writer, &output).await.unwrap_err();
+        assert_eq!(error.to_string(), "sessionVideoRecoveryFailed");
+        layout[24..26].copy_from_slice(&1920u16.to_be_bytes());
+        layout[26..28].copy_from_slice(&1080u16.to_be_bytes());
+        controls.message(&layout, &mut writer, &output).await?;
+        assert_eq!(controls.take_transition(), Some(Transition::Layout));
+        Ok(())
+    }
     #[tokio::test]
     async fn pointer_uses_selected_desktop_and_clamps_outside_drag() -> Result<()> {
         use tokio::io::AsyncReadExt;

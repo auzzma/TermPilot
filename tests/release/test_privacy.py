@@ -6,6 +6,7 @@ import subprocess
 import shutil
 import shlex
 import os
+import struct
 import sys
 import tarfile
 import tempfile
@@ -106,6 +107,36 @@ class PrivacyTests(unittest.TestCase):
             kinds = {kind for finding in audit.scan(path) for kind in finding['kinds']}
             self.assertEqual(kinds, {'hardcoded-live-test-address', 'absolute-user-directory',
                                      'user-data-or-private-signing-file'})
+
+    @unittest.skipUnless(shutil.which('clang') and shutil.which('rustc'), 'Clang and Rust required')
+    def test_windows_preassembled_file_records_are_removed_without_changing_code(self):
+        sysroot = Path(subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip())
+        candidates = list(sysroot.glob('lib/rustlib/*/bin/llvm-objcopy*'))
+        objcopy = shutil.which('llvm-objcopy') or (str(candidates[0]) if candidates else None)
+        if not objcopy:
+            self.skipTest('Install llvm-tools-preview for the COFF privacy regression')
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            source, original, stripped = [root / name for name in ('probe.s', 'probe.obj', 'clean.obj')]
+            source.write_text('.file "C:\\\\Users\\\\fixture\\\\probe.asm"\n'
+                              '.text\n.globl fixture_probe\nfixture_probe:\n ret\n', encoding='utf-8')
+            subprocess.run(['clang', '--target=x86_64-pc-windows-msvc', '-c', str(source),
+                            '-o', str(original)], check=True)
+            self.assertIn('absolute-user-directory', audit.findings(original.read_bytes(), 'probe.obj'))
+            subprocess.run([objcopy, '--strip-debug', '--strip-symbol=.file',
+                            str(original), str(stripped)], check=True)
+            self.assertEqual(audit.scan(stripped), [])
+
+            def sections(data):
+                count = struct.unpack_from('<H', data, 2)[0]
+                result = {}
+                for offset in range(20, 20 + 40 * count, 40):
+                    name = data[offset:offset + 8].rstrip(b'\0')
+                    size, start = struct.unpack_from('<II', data, offset + 16)
+                    result[name] = data[start:start + size]
+                return result
+
+            self.assertEqual(sections(original.read_bytes()), sections(stripped.read_bytes()))
 
     def test_development_profile_exception_does_not_allow_build_paths(self):
         self.assertEqual(audit.findings(b'fixture', 'embedded.mobileprovision'),

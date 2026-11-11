@@ -22,6 +22,7 @@ pub(super) trait Sink {
     fn video(&mut self, unit: Unit, tile: usize) -> Result<()>;
     fn audio(&mut self, bytes: Vec<u8>);
     fn recover(&mut self);
+    fn restart(&mut self) { self.recover(); }
     fn poll(&mut self) -> Result<()> {
         Ok(())
     }
@@ -84,6 +85,11 @@ impl Sink for Decoder {
     fn recover(&mut self) {
         self.waiting = true;
         self.reset = true;
+    }
+    fn restart(&mut self) {
+        self.params.clear();
+        self.waiting = true;
+        self.reset = false;
     }
     fn video(&mut self, unit: Unit, tile: usize) -> Result<()> {
         if self.waiting {
@@ -160,6 +166,8 @@ enum Job {
     Video(Unit, usize, Instant),
     Audio(Vec<u8>),
     Recover,
+    Restart,
+    Barrier(tokio::sync::oneshot::Sender<()>),
     #[cfg(any(target_os = "android", test))]
     Poll,
 }
@@ -185,6 +193,11 @@ struct Shared {
 #[derive(Clone)]
 pub(super) struct Queue(Arc<Shared>);
 impl Queue {
+    pub fn barrier(&self, ready: tokio::sync::oneshot::Sender<()>) {
+        let mut s = self.0.state.lock().unwrap();
+        s.jobs.push_back(Job::Barrier(ready));
+        self.0.ready.notify_one();
+    }
     pub fn new(stats: Arc<Stats>, feedback: mpsc::Sender<Feedback>) -> Self {
         Self(Arc::new(Shared {
             state: Mutex::new(State::default()),
@@ -299,6 +312,8 @@ impl Queue {
                     Job::Video(unit, tile, _) => decoder.video(unit, tile)?,
                     Job::Audio(bytes) => decoder.audio(bytes),
                     Job::Recover => decoder.recover(),
+                    Job::Restart => decoder.restart(),
+                    Job::Barrier(ready) => { let _ = ready.send(()); }
                     #[cfg(any(target_os = "android", test))]
                     Job::Poll => {}
                 }
@@ -314,6 +329,18 @@ impl Queue {
     }
 }
 impl Sink for Queue {
+    fn restart(&mut self) {
+        let mut s = self.0.state.lock().unwrap();
+        self.clear_video(&mut s);
+        s.jobs.clear();
+        s.audio = 0;
+        s.waiting = true;
+        s.last_fir = None;
+        #[cfg(any(target_os = "android", test))]
+        { s.poll_output = false; }
+        s.jobs.push_back(Job::Restart);
+        self.0.ready.notify_one();
+    }
     fn health(&mut self) -> Result<()> {
         let s = self.0.state.lock().unwrap();
         ensure!(
@@ -395,6 +422,26 @@ impl Sink for Queue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_restart_discards_old_configuration_audio_and_reference_frames() {
+        let (mut q, _) = queue();
+        q.configure(&Parameters::new()).unwrap();
+        q.audio(vec![1, 2]);
+        q.video(unit(1, true), 0).unwrap();
+        q.restart();
+        {
+            let s = q.0.state.lock().unwrap();
+            assert_eq!((s.videos, s.video_bytes, s.audio), (0, 0, 0));
+            assert!(s.waiting);
+            assert_eq!(s.jobs.len(), 1);
+            assert!(matches!(s.jobs.front(), Some(Job::Restart)));
+        }
+        q.video(unit(2, false), 0).unwrap();
+        assert_eq!(q.0.state.lock().unwrap().videos, 0);
+        q.configure(&Parameters::from([((32, 0), vec![64, 1])])).unwrap();
+        q.video(unit(3, true), 0).unwrap();
+        assert_eq!(q.0.state.lock().unwrap().videos, 1);
+    }
     fn unit(tag: u16, key: bool) -> Unit {
         Unit {
             codec: VideoCodec::H265,

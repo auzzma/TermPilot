@@ -23,13 +23,17 @@ final class RemoteCursorUITests: XCTestCase {
       XCTAssertNotEqual(moved, "960, 540")
       XCTAssertFalse((moved ?? "").isEmpty)
       capture(app, "cursor-\(kind)-portrait")
+      let portraitFrame = surface.frame
       XCUIDevice.shared.orientation = .landscapeLeft
       let landscape = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-        surface.frame.width > surface.frame.height
+        let window = app.windows.firstMatch.frame
+        let frame = surface.frame
+        return window.width > window.height && frame.width > 0 && frame.height > 0
+          && frame != portraitFrame && surface.isHittable
       }, object: surface)
-      XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed)
-      // The accessibility frame can update before UIKit's rotation animation finishes.
-      Thread.sleep(forTimeInterval: 0.6)
+      // The remote surface can be narrower than the landscape iPad window.
+      // Wait for the actual window and viewport transition, including a busy CI simulator.
+      XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 30), .completed)
       XCTAssertEqual(surface.value as? String, moved, "Rotation must preserve remote pointer position")
       capture(app, "cursor-\(kind)-landscape")
       toggle.tap()

@@ -22,6 +22,7 @@ public struct RemoteMediaDiagnostics: Codable, Sendable {
     public var recoverySkips: Int64?
     public var overloadRecoveries: Int64?
     public var decoderResets: Int64?
+    public var sessionRecoveries: Int64?
     public var decodeMicros: Double?
     public var decodeCalls: Int64?
     public var maxDecodeMicros: Double?
@@ -49,6 +50,7 @@ public struct RemoteMediaDiagnostics: Codable, Sendable {
             "Assembly expired: \(n(assemblyDrops)) units · Late units: \(n(lateUnits)) · Missing sequence: \(n(missingUnits))",
             "Codec queue drops: \(n(codecQueueDrops)) units · Recovery skips: \(n(recoverySkips))",
             "Overload recoveries: \(n(overloadRecoveries)) · Decoder resets: \(n(decoderResets))",
+            "Session media restarts: \(n(sessionRecoveries))",
             "Decode time: \(ms(average)) ms avg · \(ms(maxDecodeMicros)) ms max · Queue wait: \(ms(maxQueueMicros)) ms max",
             "Video errors: \(n(videoErrors)) · Last code: \(n(lastVideoDecodeError)) · Audio errors: \(n(audioDecodeErrors))"
         ]

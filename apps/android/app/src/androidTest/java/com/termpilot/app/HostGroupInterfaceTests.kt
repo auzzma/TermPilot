@@ -42,14 +42,15 @@ class HostGroupInterfaceTests {
             compose.onNodeWithTag("group-tree-leaf").assertDoesNotExist()
             compose.onNodeWithText("全部展开").performClick()
             compose.onNodeWithTag("group-tree-leaf").assertExists()
-            compose.onNodeWithTag("host-tree-host").assertIsDisplayed()
+            // The nested row can be below the viewport on smaller emulators.
+            compose.onNodeWithTag("host-tree-host").performScrollTo().assertIsDisplayed()
             for(theme in listOf("dark","light")){
                 compose.runOnIdle{model.theme=theme};compose.waitForIdle()
                 InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(200,3000)
                 val bitmap=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
                 File(compose.activity.cacheDir,"host-tree-$theme.png").outputStream().use{bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
             }
-            compose.onNodeWithText("全部收起").performClick()
+            compose.onNodeWithText("全部收起").performScrollTo().performClick()
             compose.onNodeWithTag("group-tree-root").assertExists()
             compose.onNodeWithTag("group-tree-child").assertDoesNotExist()
             assertTrue(preferences.getStringSet("collapsedHostGroups",emptySet())!!.contains("tree-root"))

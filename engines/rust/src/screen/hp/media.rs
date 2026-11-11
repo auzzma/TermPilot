@@ -31,6 +31,7 @@ pub enum Input {
     Video(Packet),
     Audio(Vec<u8>),
     Refresh,
+    Restart(tokio::sync::oneshot::Sender<()>),
     Tick,
 }
 #[derive(Debug)]
@@ -801,7 +802,7 @@ pub fn run(
                 .map_err(|_| anyhow::anyhow!("Video decoder panicked"))?;
             return result.and(decoded);
         }
-        let mut pipeline = Pipeline::new(queue.clone(), feedback, stats, tiles);
+        let mut pipeline = Pipeline::new(queue.clone(), feedback.clone(), stats.clone(), tiles);
         let result = (|| {
             while let Some(input) = input.blocking_recv() {
                 pipeline.native.health()?;
@@ -809,6 +810,11 @@ pub fn run(
                     Input::Video(packet) => pipeline.packet(packet)?,
                     Input::Audio(payload) => pipeline.native.audio(payload),
                     Input::Refresh => pipeline.fir(),
+                    Input::Restart(ready) => {
+                        pipeline.native.restart();
+                        pipeline = Pipeline::new(queue.clone(), feedback.clone(), stats.clone(), tiles);
+                        queue.barrier(ready);
+                    }
                     Input::Tick => {
                         pipeline.select();
                         pipeline.evict(false);

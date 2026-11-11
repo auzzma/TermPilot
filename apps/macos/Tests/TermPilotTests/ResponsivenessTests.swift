@@ -48,20 +48,22 @@ final class ResponsivenessTests: XCTestCase {
 
     @MainActor
     func testBlockingWorkLeavesMainActorResponsiveAndDiscardsCancelledResult() async throws {
-        var ticked = false
+        let started = expectation(description: "Background operation started")
+        let release = DispatchSemaphore(value: 0)
         let work = Task {
             try await ConnectionPreparationService.run {
                 XCTAssertFalse(Thread.isMainThread)
-                Thread.sleep(forTimeInterval: 0.2)
+                started.fulfill()
+                release.wait()
                 return 42
             }
         }
-        try await Task.sleep(for: .milliseconds(20))
-        ticked = true
+        // The main actor must resume while the background operation is blocked.
+        await fulfillment(of: [started], timeout: 10)
         work.cancel()
+        release.signal()
         do { _ = try await work.value; XCTFail("Cancelled preparation returned a usable result") }
         catch is CancellationError {}
-        XCTAssertTrue(ticked)
     }
 
     @MainActor
@@ -78,21 +80,25 @@ final class ResponsivenessTests: XCTestCase {
 
     @MainActor
     func testCancelledBackgroundCreationCleansUpItsResult() async throws {
+        let started = expectation(description: "Resource creation started")
         let cleaned = expectation(description: "Created resource released")
+        let release = DispatchSemaphore(value: 0)
         let work = Task {
             try await ConnectionPreparationService.run(onCancellation: { value in
                 XCTAssertEqual(value, 42)
                 cleaned.fulfill()
             }) {
-                Thread.sleep(forTimeInterval: 0.1)
+                started.fulfill()
+                release.wait()
                 return 42
             }
         }
-        try await Task.sleep(for: .milliseconds(20))
+        await fulfillment(of: [started], timeout: 10)
         work.cancel()
+        release.signal()
         do { _ = try await work.value; XCTFail("Cancelled creation succeeded") }
         catch is CancellationError {}
-        await fulfillment(of: [cleaned], timeout: 1)
+        await fulfillment(of: [cleaned], timeout: 10)
     }
 
     @MainActor

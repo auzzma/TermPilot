@@ -359,7 +359,12 @@ mod tests {
         #[cfg(windows)]
         let mut command = CommandBuilder::new("powershell.exe");
         #[cfg(windows)]
-        command.args(["-NoLogo", "-NoProfile"]);
+        command.args([
+            "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+            // Test PTY input/output without PSReadLine's interactive VT/Win32
+            // input negotiation; this harness is not a terminal emulator.
+            "$value = [Console]::ReadLine(); [Console]::WriteLine('termpilot-' + $value)",
+        ]);
         #[cfg(unix)]
         command.arg("-i");
         let mut child = pair.slave.spawn_command(command).expect("spawn shell");
@@ -387,7 +392,7 @@ mod tests {
         #[cfg(unix)]
         let input = b"printf 'termpilot-%s\\n' 'pty-ok'; exit\n".as_slice();
         #[cfg(windows)]
-        let input = b"Write-Output ('termpilot-'+'pty-ok'); exit\r".as_slice();
+        let input = b"pty-ok\r\n".as_slice();
         writer.write_all(input).expect("input");
         writer.flush().expect("flush");
         let until = std::time::Instant::now() + std::time::Duration::from_secs(20);

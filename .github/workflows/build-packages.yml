@@ -79,6 +79,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1-${{ matrix.rust-host }}
+          components: llvm-tools-preview
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'

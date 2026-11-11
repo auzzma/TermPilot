@@ -11,6 +11,7 @@ pub mod file_fs;
 pub mod files;
 pub mod media;
 pub mod offers;
+mod recovery;
 #[cfg(any(target_os = "macos", windows))]
 pub mod broker;
 
@@ -278,7 +279,7 @@ pub async fn run(
     let connection::Connection {
         mut reader,
         writer,
-        keys,
+        mut keys,
         width,
         height,
         tiles,
@@ -290,7 +291,7 @@ pub async fn run(
     );
     let mut video_rx = crypto::Rtp::new(&*keys.video_server)?;
     let mut audio_rx = crypto::Rtp::new(&*keys.audio_server)?;
-    let audio_tx = crypto::Rtp::new(&*keys.audio_viewer)?;
+    let mut audio_tx = crypto::Rtp::new(&*keys.audio_viewer)?;
     let mut rtcp_tx = crypto::Rtcp::new(&*keys.video_viewer)?;
     let mut rtcp_rx = crypto::Rtcp::new(&*keys.video_server)?;
     let audio_enabled = Arc::new(AtomicBool::new(config["audio"].as_bool().unwrap_or(true)));
@@ -314,6 +315,10 @@ pub async fn run(
     for message in leftover {
         dispatch(&message, &mut controls, &mut files, &writer, &output).await?;
     }
+    // Initial negotiation layouts are not user-session transitions.
+    controls.take_transition();
+    let mut recovery = recovery::Recovery::default();
+    let mut session_recoveries = 0u64;
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut media_tick = tokio::time::interval(Duration::from_millis(10));
@@ -333,7 +338,12 @@ pub async fn run(
         status=&mut decoder=>{decoder_finished=true;status??;break;},
         _=files.flush_pending()=>{},
         _=media_tick.tick()=>{let _=media_tx.try_send(media::Input::Tick);},
-        message=reader.read(), if !files.is_backpressured()=>{dispatch(&message?,&mut controls,&mut files,&writer,&output).await?;},
+        message=reader.read(), if !files.is_backpressured()=>{dispatch(&message?,&mut controls,&mut files,&writer,&output).await?;
+            if let Some(kind)=controls.take_transition(){
+                recovery.transition(kind,Instant::now(),stats.frames.load(Ordering::Relaxed));
+                output.emit(json!({"kind":"sessionTransition","stage":if kind==recovery::Transition::Session {"session"}else{"layout"}}),Vec::new()).await?;
+            }
+        },
         command=commands.recv()=>{let Some(command)=command else{break};
             if text(&command,"kind")=="credentialKey" {
                 let acknowledgement=controls.credential_key(&command,&mut *writer.lock().await).await?;
@@ -341,7 +351,10 @@ pub async fn run(
             }
             if controls.command(&command,&mut *writer.lock().await).await?{continue;}match text(&command,"kind"){
             "audio"=>audio_enabled.store(command["enabled"].as_bool()==Some(true),Ordering::Relaxed),
-            "refresh"=>{let _=media_tx.try_send(media::Input::Refresh);},
+            "refresh"=>{
+                let _=media_tx.try_send(media::Input::Refresh);
+                recovery.transition(recovery::Transition::Session,Instant::now(),stats.frames.load(Ordering::Relaxed));
+            },
             _=>{if let Err(error)=files.command(&command).await{let message=error.to_string();let code=if ["invalidPath","invalidName","expiredDrag","invalidRequest","tooManyFiles","unsupportedFileType"].contains(&message.as_str()){message.as_str()}else{"ioError"};output.emit(json!({"kind":"fileTransfer","requestID":command["requestID"],"stage":"failed","code":code}),Vec::new()).await?;}}
         }},
         packet=packets.recv()=>{let Some((video_packet,bytes))=packet else{anyhow::bail!(if cfg!(any(target_os="macos", windows)) {"mediaBrokerDisconnected"}else{"UDP receive channel closed"})};
@@ -362,9 +375,54 @@ pub async fn run(
             // Apple stops encoding an unchanged screen. Request recovery only
             // when authenticated video is still arriving without decoded output.
             let frames=stats.frames.load(Ordering::Relaxed);if frames!=last_frame{last_frame=frames;frame_time=Instant::now();}else if frame_time.elapsed()>Duration::from_secs(2)&&video_time.is_some_and(|at|at.elapsed()<Duration::from_secs(1)){let _=media_tx.try_send(media::Input::Refresh);}
-            if tick.is_multiple_of(2){output.emit(json!({"kind":"mediaDiagnostics","videoCodec":codec.name(),"nativeDecoder":stats.native_decoder_name(),"nativeSubmitted":stats.native_submitted.load(Ordering::Relaxed),"nativeOutputs":stats.native_outputs.load(Ordering::Relaxed),"nativeColorFormat":stats.native_color.load(Ordering::Relaxed),"frames":frames,"decodeErrors":stats.errors.load(Ordering::Relaxed),"lastVideoDecodeError":stats.last_video_error.load(Ordering::Relaxed),"audioDecodeErrors":stats.audio_errors.load(Ordering::Relaxed),"audioFrames":stats.audio_frames.load(Ordering::Relaxed),"dropped":stats.dropped.load(Ordering::Relaxed),"receiveQueueDrops":stats.receive_queue_drops.load(Ordering::Relaxed),"decodeQueueDrops":stats.decode_queue_drops.load(Ordering::Relaxed),"oversizedPackets":stats.oversized_packets.load(Ordering::Relaxed),"assemblyDrops":stats.assembly_drops.load(Ordering::Relaxed),"lateUnits":stats.late_units.load(Ordering::Relaxed),"missingUnits":stats.missing_units.load(Ordering::Relaxed),"codecQueueDrops":stats.codec_queue_drops.load(Ordering::Relaxed),"recoverySkips":stats.recovery_skips.load(Ordering::Relaxed),"overloadRecoveries":stats.overload_recoveries.load(Ordering::Relaxed),"decoderResets":stats.decoder_resets.load(Ordering::Relaxed),"decodeMicros":stats.decode_micros.load(Ordering::Relaxed),"decodeCalls":stats.decode_calls.load(Ordering::Relaxed),"maxDecodeMicros":stats.max_decode_micros.load(Ordering::Relaxed),"maxQueueMicros":stats.max_queue_micros.load(Ordering::Relaxed),"maxCodecQueueBytes":stats.max_codec_queue_bytes.load(Ordering::Relaxed),"sources":sources.len(),"parameters":stats.parameters.load(Ordering::Relaxed),"units":stats.units.load(Ordering::Relaxed),"videoPackets":video_packets,"videoIdleSeconds":video_time.map(|at|at.elapsed().as_secs_f64()),"frameIdleSeconds":frame_time.elapsed().as_secs_f64(),"nalTypes":stats.nal_types.load(Ordering::Relaxed)}),Vec::new()).await?;}
+            match recovery.poll(Instant::now(),frames,frame_time) {
+                Some(recovery::Action::Restart(attempt)) => {
+                    // Fresh keys isolate the new stream from delayed packets and
+                    // allow sequence/SSRC reuse without resetting replay protection
+                    // under the old key. The encrypted TCP connection stays open.
+                    let next = offers::Keys::new();
+                    let offer = next.message_for_codec(codec)?;
+                    let (ready, reset) = tokio::sync::oneshot::channel();
+                    tokio::select! {
+                        _ = stop.cancelled() => break,
+                        result = tokio::time::timeout(Duration::from_secs(3), async {
+                            media_tx.send(media::Input::Restart(ready)).await.context("Video decoder closed")?;
+                            reset.await.context("Video decoder closed")
+                        }) => result.context("sessionVideoRecoveryFailed")??,
+                    }
+                    // The barrier drains an in-flight old decode before taking
+                    // the success baseline; old pictures cannot satisfy recovery.
+                    recovery.restarted(stats.frames.load(Ordering::Relaxed));
+                    video_rx = crypto::Rtp::new(&*next.video_server)?;
+                    audio_rx = crypto::Rtp::new(&*next.audio_server)?;
+                    audio_tx = crypto::Rtp::new(&*next.audio_viewer)?;
+                    rtcp_tx = crypto::Rtcp::new(&*next.video_viewer)?;
+                    rtcp_rx = crypto::Rtcp::new(&*next.video_server)?;
+                    keys = next;
+                    sources.clear(); reports.clear(); last_fir.clear();
+                    while feedback_rx.try_recv().is_ok() {}
+                    video_time = None;
+                    session_recoveries += 1;
+                    writer.lock().await.send(&offer).await?;
+                    writer.lock().await.send(&offers::framebuffer(false,false)).await?;
+                    output.emit(json!({"kind":"sessionRecovery","stage":"renegotiate","attempt":attempt}),Vec::new()).await?;
+                }
+                Some(recovery::Action::Recovered) => {
+                    output.emit(json!({"kind":"sessionRecovery","stage":"recovered"}),Vec::new()).await?;
+                }
+                Some(recovery::Action::Failed) => anyhow::bail!("sessionVideoRecoveryFailed"),
+                None => {}
+            }
+            if tick.is_multiple_of(2){output.emit(json!({"kind":"mediaDiagnostics","sessionRecoveries":session_recoveries,"videoCodec":codec.name(),"nativeDecoder":stats.native_decoder_name(),"nativeSubmitted":stats.native_submitted.load(Ordering::Relaxed),"nativeOutputs":stats.native_outputs.load(Ordering::Relaxed),"nativeColorFormat":stats.native_color.load(Ordering::Relaxed),"frames":frames,"decodeErrors":stats.errors.load(Ordering::Relaxed),"lastVideoDecodeError":stats.last_video_error.load(Ordering::Relaxed),"audioDecodeErrors":stats.audio_errors.load(Ordering::Relaxed),"audioFrames":stats.audio_frames.load(Ordering::Relaxed),"dropped":stats.dropped.load(Ordering::Relaxed),"receiveQueueDrops":stats.receive_queue_drops.load(Ordering::Relaxed),"decodeQueueDrops":stats.decode_queue_drops.load(Ordering::Relaxed),"oversizedPackets":stats.oversized_packets.load(Ordering::Relaxed),"assemblyDrops":stats.assembly_drops.load(Ordering::Relaxed),"lateUnits":stats.late_units.load(Ordering::Relaxed),"missingUnits":stats.missing_units.load(Ordering::Relaxed),"codecQueueDrops":stats.codec_queue_drops.load(Ordering::Relaxed),"recoverySkips":stats.recovery_skips.load(Ordering::Relaxed),"overloadRecoveries":stats.overload_recoveries.load(Ordering::Relaxed),"decoderResets":stats.decoder_resets.load(Ordering::Relaxed),"decodeMicros":stats.decode_micros.load(Ordering::Relaxed),"decodeCalls":stats.decode_calls.load(Ordering::Relaxed),"maxDecodeMicros":stats.max_decode_micros.load(Ordering::Relaxed),"maxQueueMicros":stats.max_queue_micros.load(Ordering::Relaxed),"maxCodecQueueBytes":stats.max_codec_queue_bytes.load(Ordering::Relaxed),"sources":sources.len(),"parameters":stats.parameters.load(Ordering::Relaxed),"units":stats.units.load(Ordering::Relaxed),"videoPackets":video_packets,"videoIdleSeconds":video_time.map(|at|at.elapsed().as_secs_f64()),"frameIdleSeconds":frame_time.elapsed().as_secs_f64(),"nalTypes":stats.nal_types.load(Ordering::Relaxed)}),Vec::new()).await?;}
         }
     }}Ok(())}.await;
+    let result = result.map_err(|error| {
+        if recovery.interrupted(&error, Instant::now()) {
+            anyhow::anyhow!("sessionVideoRecoveryFailed")
+        } else {
+            error
+        }
+    });
     files.close().await;
     let _ = controls.release(&mut *writer.lock().await).await;
     writer.lock().await.close().await;

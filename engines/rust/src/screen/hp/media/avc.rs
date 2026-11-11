@@ -278,13 +278,18 @@ pub(super) fn run(
     feedback: mpsc::Sender<Feedback>,
     stats: Arc<Stats>,
 ) -> Result<()> {
-    let mut p = Pipeline::new(sink, feedback, stats);
+    let mut p = Pipeline::new(sink.clone(), feedback.clone(), stats.clone());
     while let Some(input) = input.blocking_recv() {
         p.sink.health()?;
         match input {
             Input::Video(packet) => p.packet(packet)?,
             Input::Audio(data) => p.sink.audio(data),
             Input::Refresh => p.recover(),
+            Input::Restart(ready) => {
+                p.sink.restart();
+                p = Pipeline::new(sink.clone(), feedback.clone(), stats.clone());
+                sink.barrier(ready);
+            }
             Input::Tick => p.drain()?,
         }
     }
