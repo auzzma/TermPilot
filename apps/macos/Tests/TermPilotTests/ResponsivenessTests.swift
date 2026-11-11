@@ -7,14 +7,13 @@ import XCTest
 
 private actor PreferenceRecorder {
     var batches: [[String: Data]] = []
-    var failures = 0
-    func failOnce() { failures = 1 }
+    private var nextFailure: (@Sendable () async throws -> Void)?
+    func failOnce(_ failure: @escaping @Sendable () async throws -> Void) { nextFailure = failure }
     func save(_ fields: [String: Data]) async throws {
         batches.append(fields)
-        if failures > 0 {
-            failures -= 1
-            try await Task.sleep(for: .milliseconds(50))
-            throw CocoaError(.fileWriteUnknown)
+        if let failure = nextFailure {
+            nextFailure = nil
+            try await failure()
         }
     }
 }
@@ -119,18 +118,36 @@ final class ResponsivenessTests: XCTestCase {
     @MainActor
     func testFailedSaveRetainsNewerEditForRetry() async throws {
         let recorder = PreferenceRecorder()
-        await recorder.failOnce()
+        let started = expectation(description: "First preference save started")
+        let (release, continuation) = AsyncStream<Void>.makeStream()
+        defer { continuation.finish() }
+        await recorder.failOnce {
+            started.fulfill()
+            for await _ in release {}
+            throw CocoaError(.fileWriteUnknown)
+        }
         let queue = PreferenceSaveQueue { try await recorder.save($0) }
-        queue.enqueue(Data("12".utf8), field: "fontSize")
-        // First write begins after coalescing, then fails while a newer edit arrives.
-        try await Task.sleep(for: .milliseconds(140))
+        let firstFlush = Task {
+            queue.enqueue(Data("12".utf8), field: "fontSize")
+            try await queue.flush()
+        }
+        // Hold the first write until the newer edit is actually queued. Await
+        // that flush's failure before retrying, independent of runner speed.
+        await fulfillment(of: [started], timeout: 10)
         queue.enqueue(Data("18".utf8), field: "fontSize")
-        try await Task.sleep(for: .milliseconds(100))
+        continuation.finish()
+        do {
+            try await firstFlush.value
+            XCTFail("The first flush should report its save failure")
+        } catch AppStateError.workflowRunFailed {}
         XCTAssertNotNil(queue.error)
         XCTAssertTrue(queue.hasPending("fontSize"))
         try await queue.flush()
         let batches = await recorder.batches
+        XCTAssertEqual(batches.count, 2)
+        XCTAssertEqual(batches.first?["fontSize"], Data("12".utf8))
         XCTAssertEqual(batches.last?["fontSize"], Data("18".utf8))
         XCTAssertNil(queue.error)
+        XCTAssertFalse(queue.hasPending("fontSize"))
     }
 }
