@@ -1,0 +1,54 @@
+[package]
+name = "termpilot-rdp"
+version = "0.2.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[workspace]
+
+[dependencies]
+termpilot-core = { path = "../../crates/termpilot-core" }
+ironrdp-client = { path = "../../vendor/ironrdp-client", features = ["rustls", "clipboard", "sound", "rdpdr"] }
+anyhow = "1"
+cpal = "0.17"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+zeroize = "1"
+uuid = { version = "1", features = ["v4"] }
+smallvec = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+# Matches the pinned upstream lockfile; 0.12.5 adds an enum variant that
+# sspi 0.21.3 does not handle yet.
+picky-krb = "=0.12.4"
+ironrdp-cliprdr = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+ironrdp-pdu = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+ironrdp-input = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+ironrdp-tls = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+ironrdp-graphics = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+ironrdp-core = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+
+ironrdp-rdpsnd = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+ironrdp-rdpsnd-native = { git = "https://github.com/Devolutions/IronRDP", rev = "38b074e4befeed6dd25a67decf3558bb9e7762f9" }
+
+[profile.release]
+opt-level = 2
+strip = "debuginfo"
+
+# macOS can reject stripped build-time proc-macro dylibs with a misaligned
+# LINKEDIT string pool. Keep these host-only libraries intact; the shipped
+# RDP executable still uses the release stripping setting above.
+[profile.release.build-override]
+strip = "none"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
+# Keep host-only QR derive macros loadable with Apple linker/strip.
+[profile.release.package.num-derive]
+strip = "none"

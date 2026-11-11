@@ -1,0 +1,140 @@
+{
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "当前服务器 CPU、内存、磁盘占用情况怎么样？什么进程占用最高，列举 Top 3"
+      }
+    ],
+    "status": "running",
+    "streaming": "### 正在检查\n\n- **CPU** `0%`\n\n| PID | 进程 |\n| --- | --- |\n| 1 | `init"
+  },
+  "presentation": [
+    {
+      "blocks": [],
+      "id": "message:0",
+      "kind": "message",
+      "role": "user",
+      "text": "当前服务器 CPU、内存、磁盘占用情况怎么样？什么进程占用最高，列举 Top 3"
+    },
+    {
+      "blocks": [
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "正在检查"
+            }
+          ],
+          "kind": "heading",
+          "level": 3
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "children": null,
+                          "kind": "text",
+                          "text": "CPU"
+                        }
+                      ],
+                      "kind": "strong"
+                    },
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": " "
+                    },
+                    {
+                      "children": null,
+                      "kind": "code",
+                      "text": "0%"
+                    }
+                  ],
+                  "kind": "paragraph"
+                }
+              ],
+              "kind": "item"
+            }
+          ],
+          "kind": "list",
+          "start": null
+        },
+        {
+          "alignments": [
+            "none",
+            "none"
+          ],
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "PID"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "进程"
+                    }
+                  ],
+                  "kind": "tableCell"
+                }
+              ],
+              "kind": "tableHead"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "1"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "`"
+                    },
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "init"
+                    }
+                  ],
+                  "kind": "tableCell"
+                }
+              ],
+              "kind": "tableRow"
+            }
+          ],
+          "kind": "table"
+        }
+      ],
+      "id": "streaming",
+      "kind": "message",
+      "role": "assistant",
+      "text": "### 正在检查\n\n- **CPU** `0%`\n\n| PID | 进程 |\n| --- | --- |\n| 1 | `init"
+    }
+  ]
+}

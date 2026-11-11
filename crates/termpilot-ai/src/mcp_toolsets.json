@@ -1,0 +1,87 @@
+{
+  "core": [
+    "get_environment",
+    "session_close",
+    "terminal_execute",
+    "terminal_start",
+    "terminal_poll",
+    "terminal_stop",
+    "sftp_list",
+    "sftp_read_file",
+    "sftp_write_file",
+    "sftp_download",
+    "sftp_upload",
+    "vault_hosts_list",
+    "host_open",
+    "terminal_read_context"
+  ],
+  "attachments": [
+    "list_attachments",
+    "read_attachment"
+  ],
+  "sftp_advanced": [
+    "sftp_stat",
+    "sftp_home",
+    "sftp_mkdir",
+    "sftp_delete",
+    "sftp_rename",
+    "sftp_chmod"
+  ],
+  "vault_hosts": [
+    "host_get",
+    "vault_hosts_create",
+    "vault_hosts_update",
+    "vault_hosts_delete",
+    "vault_hosts_import",
+    "host_notes_get",
+    "host_notes_set",
+    "vault_identities_list",
+    "vault_proxy_profiles_list",
+    "vault_groups_list",
+    "vault_groups_create",
+    "vault_groups_update",
+    "vault_groups_delete"
+  ],
+  "vault_notes": [
+    "vault_notes_list",
+    "vault_notes_get",
+    "vault_notes_create",
+    "vault_notes_update",
+    "vault_notes_delete",
+    "vault_notes_import"
+  ],
+  "snippets": [
+    "snippets_list",
+    "snippets_get",
+    "snippets_run",
+    "snippets_create",
+    "snippets_update",
+    "snippets_delete"
+  ],
+  "scripts": [
+    "scripts_list",
+    "scripts_get",
+    "scripts_create",
+    "scripts_update",
+    "scripts_delete",
+    "scripts_run",
+    "scripts_reference",
+    "scripts_runs_list",
+    "scripts_run_stop",
+    "scripts_run_pause",
+    "scripts_run_resume",
+    "scripts_targets_set",
+    "host_connect_scripts_list",
+    "host_connect_scripts_set"
+  ],
+  "portforward": [
+    "portforward_rules_list",
+    "portforward_tunnels_list",
+    "portforward_rules_create",
+    "portforward_rules_update",
+    "portforward_rules_duplicate",
+    "portforward_rules_delete",
+    "portforward_start",
+    "portforward_stop"
+  ]
+}

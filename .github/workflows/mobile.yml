@@ -1,0 +1,164 @@
+name: Mobile packages (Android, iOS and iPadOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_signed:
+        description: Sign Android APKs with repository signing secrets
+        type: boolean
+        default: false
+      ios_signed:
+        description: Also create an IPA for provisioned devices using repository signing secrets
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      android_signed:
+        type: boolean
+        default: false
+      ios_signed:
+        type: boolean
+        default: false
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+      IOS_CERTIFICATE_P12_BASE64:
+        required: false
+      IOS_CERTIFICATE_PASSWORD:
+        required: false
+      IOS_PROVISION_PROFILE_BASE64:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97.1'
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned Android build tools
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+      - name: Verify publishable source
+        run: python3 scripts/ci/check-source.py
+      - name: Build both Android architectures and unit tests
+        run: |
+          bash scripts/mobile/build-android.sh aarch64-linux-android
+          bash scripts/mobile/build-android.sh x86_64-linux-android
+          bash apps/android/gradlew --no-daemon -p apps/android assembleDebugAndroidTest testDebugUnitTest
+      - name: Enable emulator KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator native/UI tests (live tests skip without private fixtures)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: bash apps/android/gradlew --no-daemon -p apps/android connectedDebugAndroidTest
+      - name: Prepare optional persistent Android signing key
+        if: inputs.android_signed
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 scripts/ci/android-signing.py
+      - name: Package and audit Android APKs
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 scripts/mobile/package.py android
+          python3 scripts/mobile/bundle.py android
+      - name: Remove temporary Android signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/termpilot-android-signing.jks"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: TermPilot-Android
+          path: |
+            dist/mobile/android/TermPilot-*-android.zip
+            dist/mobile/android/TermPilot-*-android.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  apple:
+    runs-on: macos-15
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97.1'
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Select Xcode and install project generator
+        run: |
+          bash scripts/ci/select-xcode.sh
+          brew install xcodegen
+      - name: Verify publishable source
+        run: python3 scripts/ci/check-source.py
+      - name: Build device and simulator applications
+        run: |
+          bash scripts/mobile/build-ios.sh aarch64-apple-ios
+          bash scripts/mobile/build-ios.sh aarch64-apple-ios-sim
+      - name: Package and audit Apple applications
+        env:
+          TERMPILOT_IOS_SIGN: ${{ inputs.ios_signed && '1' || '0' }}
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+        run: |
+          python3 scripts/mobile/package.py ios
+          python3 scripts/mobile/bundle.py ios
+      - name: Run iPhone and iPad simulator tests
+        run: bash scripts/mobile/test-ios.sh
+      # Upload distributable files only; xcresult/reports can contain runner paths.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: TermPilot-iOS-iPadOS
+          path: |
+            dist/mobile/ios/TermPilot-*-ios-ipados.zip
+            dist/mobile/ios/TermPilot-*-ios-ipados.zip.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

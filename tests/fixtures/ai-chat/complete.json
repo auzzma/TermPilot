@@ -1,0 +1,530 @@
+{
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "当前服务器 CPU、内存、磁盘占用情况怎么样？什么进程占用最高，列举 Top 3"
+      },
+      {
+        "role": "assistant",
+        "content": "我会执行只读状态检查，获取 CPU、内存和磁盘使用情况。",
+        "calls": [
+          {
+            "id": "cpu-call",
+            "name": "terminal_execute",
+            "arguments": {
+              "sessionId": "fixture-server",
+              "command": "uptime; df -h /"
+            }
+          },
+          {
+            "id": "memory-call",
+            "name": "terminal_execute",
+            "arguments": {
+              "sessionId": "fixture-server",
+              "command": "free -h"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "callId": "cpu-call",
+        "name": "terminal_execute",
+        "content": "{\"code\":0,\"stdout\":\"load averages: 0.17 0.16 0.11\"}"
+      },
+      {
+        "role": "assistant",
+        "content": ""
+      },
+      {
+        "role": "tool",
+        "callId": "memory-call",
+        "name": "terminal_execute",
+        "content": "{\"code\":0,\"stdout\":\"Mem: 960 MiB\"}"
+      },
+      {
+        "role": "assistant",
+        "content": "当前服务器整体负载较低，资源情况如下：\n\n### 资源使用情况\n\n- **CPU**\n  - 当前使用率：约 **0%**\n  - 系统负载：`0.17 / 0.16 / 0.11`\n- **内存**\n  - 总内存：**960 MiB**\n  - 已使用：418 MiB\n- **磁盘**\n  - 根分区 `/dev/vda1`，已使用 **36%**\n\n### CPU 占用 Top 3\n\n| PID | 进程 | CPU |\n| ---: | --- | ---: |\n| 3867230 | `kworker/0:1-events` | 0.5% |\n| 3863044 | `kworker/0:2-cgroup_release` | 0.3% |\n| 2263597 | `gost` | 0.2% |\n\n### 建议\n\n可继续观察，无需重启服务。\n\n```sh\nuptime\ndf -h /\n```\n"
+      }
+    ],
+    "status": "completed"
+  },
+  "presentation": [
+    {
+      "blocks": [],
+      "id": "message:0",
+      "kind": "message",
+      "role": "user",
+      "text": "当前服务器 CPU、内存、磁盘占用情况怎么样？什么进程占用最高，列举 Top 3"
+    },
+    {
+      "blocks": [
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "我会执行只读状态检查，获取 CPU、内存和磁盘使用情况。"
+            }
+          ],
+          "kind": "paragraph"
+        }
+      ],
+      "id": "message:1",
+      "kind": "message",
+      "role": "assistant",
+      "text": "我会执行只读状态检查，获取 CPU、内存和磁盘使用情况。"
+    },
+    {
+      "id": "tools:cpu-call",
+      "kind": "tools",
+      "tools": [
+        {
+          "approval": null,
+          "arguments": "{\n  \"command\": \"uptime; df -h /\",\n  \"sessionId\": \"fixture-server\"\n}",
+          "id": "cpu-call",
+          "name": "terminal_execute",
+          "output": "{\n  \"code\": 0,\n  \"stdout\": \"load averages: 0.17 0.16 0.11\"\n}",
+          "state": "completed",
+          "summary": "$ uptime; df -h /"
+        },
+        {
+          "approval": null,
+          "arguments": "{\n  \"command\": \"free -h\",\n  \"sessionId\": \"fixture-server\"\n}",
+          "id": "memory-call",
+          "name": "terminal_execute",
+          "output": "{\n  \"code\": 0,\n  \"stdout\": \"Mem: 960 MiB\"\n}",
+          "state": "completed",
+          "summary": "$ free -h"
+        }
+      ]
+    },
+    {
+      "blocks": [
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "当前服务器整体负载较低，资源情况如下："
+            }
+          ],
+          "kind": "paragraph"
+        },
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "资源使用情况"
+            }
+          ],
+          "kind": "heading",
+          "level": 3
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "children": null,
+                          "kind": "text",
+                          "text": "CPU"
+                        }
+                      ],
+                      "kind": "strong"
+                    }
+                  ],
+                  "kind": "paragraph"
+                },
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "children": [
+                            {
+                              "children": null,
+                              "kind": "text",
+                              "text": "当前使用率：约 "
+                            },
+                            {
+                              "children": [
+                                {
+                                  "children": null,
+                                  "kind": "text",
+                                  "text": "0%"
+                                }
+                              ],
+                              "kind": "strong"
+                            }
+                          ],
+                          "kind": "paragraph"
+                        }
+                      ],
+                      "kind": "item"
+                    },
+                    {
+                      "children": [
+                        {
+                          "children": [
+                            {
+                              "children": null,
+                              "kind": "text",
+                              "text": "系统负载："
+                            },
+                            {
+                              "children": null,
+                              "kind": "code",
+                              "text": "0.17 / 0.16 / 0.11"
+                            }
+                          ],
+                          "kind": "paragraph"
+                        }
+                      ],
+                      "kind": "item"
+                    }
+                  ],
+                  "kind": "list",
+                  "start": null
+                }
+              ],
+              "kind": "item"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "children": null,
+                          "kind": "text",
+                          "text": "内存"
+                        }
+                      ],
+                      "kind": "strong"
+                    }
+                  ],
+                  "kind": "paragraph"
+                },
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "children": [
+                            {
+                              "children": null,
+                              "kind": "text",
+                              "text": "总内存："
+                            },
+                            {
+                              "children": [
+                                {
+                                  "children": null,
+                                  "kind": "text",
+                                  "text": "960 MiB"
+                                }
+                              ],
+                              "kind": "strong"
+                            }
+                          ],
+                          "kind": "paragraph"
+                        }
+                      ],
+                      "kind": "item"
+                    },
+                    {
+                      "children": [
+                        {
+                          "children": [
+                            {
+                              "children": null,
+                              "kind": "text",
+                              "text": "已使用：418 MiB"
+                            }
+                          ],
+                          "kind": "paragraph"
+                        }
+                      ],
+                      "kind": "item"
+                    }
+                  ],
+                  "kind": "list",
+                  "start": null
+                }
+              ],
+              "kind": "item"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "children": null,
+                          "kind": "text",
+                          "text": "磁盘"
+                        }
+                      ],
+                      "kind": "strong"
+                    }
+                  ],
+                  "kind": "paragraph"
+                },
+                {
+                  "children": [
+                    {
+                      "children": [
+                        {
+                          "children": [
+                            {
+                              "children": null,
+                              "kind": "text",
+                              "text": "根分区 "
+                            },
+                            {
+                              "children": null,
+                              "kind": "code",
+                              "text": "/dev/vda1"
+                            },
+                            {
+                              "children": null,
+                              "kind": "text",
+                              "text": "，已使用 "
+                            },
+                            {
+                              "children": [
+                                {
+                                  "children": null,
+                                  "kind": "text",
+                                  "text": "36%"
+                                }
+                              ],
+                              "kind": "strong"
+                            }
+                          ],
+                          "kind": "paragraph"
+                        }
+                      ],
+                      "kind": "item"
+                    }
+                  ],
+                  "kind": "list",
+                  "start": null
+                }
+              ],
+              "kind": "item"
+            }
+          ],
+          "kind": "list",
+          "start": null
+        },
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "CPU 占用 Top 3"
+            }
+          ],
+          "kind": "heading",
+          "level": 3
+        },
+        {
+          "alignments": [
+            "right",
+            "none",
+            "right"
+          ],
+          "children": [
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "PID"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "进程"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "CPU"
+                    }
+                  ],
+                  "kind": "tableCell"
+                }
+              ],
+              "kind": "tableHead"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "3867230"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "code",
+                      "text": "kworker/0:1-events"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "0.5%"
+                    }
+                  ],
+                  "kind": "tableCell"
+                }
+              ],
+              "kind": "tableRow"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "3863044"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "code",
+                      "text": "kworker/0:2-cgroup_release"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "0.3%"
+                    }
+                  ],
+                  "kind": "tableCell"
+                }
+              ],
+              "kind": "tableRow"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "2263597"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "code",
+                      "text": "gost"
+                    }
+                  ],
+                  "kind": "tableCell"
+                },
+                {
+                  "children": [
+                    {
+                      "children": null,
+                      "kind": "text",
+                      "text": "0.2%"
+                    }
+                  ],
+                  "kind": "tableCell"
+                }
+              ],
+              "kind": "tableRow"
+            }
+          ],
+          "kind": "table"
+        },
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "建议"
+            }
+          ],
+          "kind": "heading",
+          "level": 3
+        },
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "可继续观察，无需重启服务。"
+            }
+          ],
+          "kind": "paragraph"
+        },
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "uptime\ndf -h /\n"
+            }
+          ],
+          "kind": "codeBlock",
+          "language": "sh"
+        }
+      ],
+      "id": "message:5",
+      "kind": "message",
+      "role": "assistant",
+      "text": "当前服务器整体负载较低，资源情况如下：\n\n### 资源使用情况\n\n- **CPU**\n  - 当前使用率：约 **0%**\n  - 系统负载：`0.17 / 0.16 / 0.11`\n- **内存**\n  - 总内存：**960 MiB**\n  - 已使用：418 MiB\n- **磁盘**\n  - 根分区 `/dev/vda1`，已使用 **36%**\n\n### CPU 占用 Top 3\n\n| PID | 进程 | CPU |\n| ---: | --- | ---: |\n| 3867230 | `kworker/0:1-events` | 0.5% |\n| 3863044 | `kworker/0:2-cgroup_release` | 0.3% |\n| 2263597 | `gost` | 0.2% |\n\n### 建议\n\n可继续观察，无需重启服务。\n\n```sh\nuptime\ndf -h /\n```\n"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "termpilot-protocol-test-fixtures",
+  "private": true,
+  "description": "Development-only SSH oracle; never shipped with TermPilot",
+  "dependencies": { "ssh2": "1.17.0" }
+}

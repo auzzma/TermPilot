@@ -1,0 +1,4 @@
+module TermPilotMobile {
+  header "TermPilotMobile.h"
+  export *
+}

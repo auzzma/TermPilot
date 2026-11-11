@@ -1,0 +1,90 @@
+{
+  "input": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "当前服务器 CPU、内存、磁盘占用情况怎么样？什么进程占用最高，列举 Top 3"
+      },
+      {
+        "role": "assistant",
+        "content": "我会执行只读状态检查，获取 CPU、内存和磁盘使用情况。",
+        "calls": [
+          {
+            "id": "cpu-call",
+            "name": "terminal_execute",
+            "arguments": {
+              "sessionId": "fixture-server",
+              "command": "uptime; df -h /"
+            }
+          },
+          {
+            "id": "memory-call",
+            "name": "terminal_execute",
+            "arguments": {
+              "sessionId": "fixture-server",
+              "command": "free -h"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "callId": "cpu-call",
+        "name": "terminal_execute",
+        "content": "{\"error\":\"Connection closed\"}"
+      }
+    ],
+    "status": "failed"
+  },
+  "presentation": [
+    {
+      "blocks": [],
+      "id": "message:0",
+      "kind": "message",
+      "role": "user",
+      "text": "当前服务器 CPU、内存、磁盘占用情况怎么样？什么进程占用最高，列举 Top 3"
+    },
+    {
+      "blocks": [
+        {
+          "children": [
+            {
+              "children": null,
+              "kind": "text",
+              "text": "我会执行只读状态检查，获取 CPU、内存和磁盘使用情况。"
+            }
+          ],
+          "kind": "paragraph"
+        }
+      ],
+      "id": "message:1",
+      "kind": "message",
+      "role": "assistant",
+      "text": "我会执行只读状态检查，获取 CPU、内存和磁盘使用情况。"
+    },
+    {
+      "id": "tools:cpu-call",
+      "kind": "tools",
+      "tools": [
+        {
+          "approval": null,
+          "arguments": "{\n  \"command\": \"uptime; df -h /\",\n  \"sessionId\": \"fixture-server\"\n}",
+          "id": "cpu-call",
+          "name": "terminal_execute",
+          "output": "{\n  \"error\": \"Connection closed\"\n}",
+          "state": "error",
+          "summary": "$ uptime; df -h /"
+        },
+        {
+          "approval": null,
+          "arguments": "{\n  \"command\": \"free -h\",\n  \"sessionId\": \"fixture-server\"\n}",
+          "id": "memory-call",
+          "name": "terminal_execute",
+          "output": "",
+          "state": "interrupted",
+          "summary": "$ free -h"
+        }
+      ]
+    }
+  ]
+}

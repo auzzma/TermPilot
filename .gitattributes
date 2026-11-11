@@ -1,0 +1,11 @@
+# Preserve portable shell scripts and generated-source comparisons on Windows.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.jar binary
+*.fixture binary
+*.bundledata binary
+*.cer binary

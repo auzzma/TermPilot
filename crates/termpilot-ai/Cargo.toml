@@ -1,0 +1,30 @@
+[package]
+name = "termpilot-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+termpilot-core = { path = "../termpilot-core" }
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "socks"] }
+futures-util = "0.3"
+rusqlite = "0.32"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+zeroize = "1"
+sha2 = "0.10"
+hex = "0.4"
+axum = "0.8"
+rquickjs = { version = "0.14", default-features = false, features = ["std"] }
+serde_yaml_ng = "0.10"
+regex = "1"
+pulldown-cmark = { version = "0.13", default-features = false }
+
+# QuickJS ships desktop bindings; generate ABI-correct bindings for mobile SDKs.
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+rquickjs = { version = "0.14", default-features = false, features = ["std", "bindgen"] }

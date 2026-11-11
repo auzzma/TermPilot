@@ -1,0 +1,55 @@
+[package]
+name = "termpilot-windows"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "TermPilot Windows UI with shared Rust engines"
+
+[workspace]
+
+[lib]
+name = "termpilot_windows"
+
+[[bin]]
+name = "TermPilot"
+path = "src/main.rs"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+arboard = { version = "3", default-features = false }
+termpilot-core = { path = "../../../crates/termpilot-core" }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+directories = "6"
+flate2 = "1"
+parking_lot = "0.12"
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = "0.32"
+sha2 = "0.10"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["time"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+
+[profile.release]
+opt-level = "s"
+strip = true
+lto = true
+codegen-units = 1
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_Memory", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-core = "0.62.2"
+
+# Keep host-only QR derive macros loadable with Apple linker/strip.
+[profile.release.package.num-derive]
+strip = "none"

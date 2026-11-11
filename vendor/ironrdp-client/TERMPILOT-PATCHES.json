@@ -1,0 +1,11 @@
+{
+  "upstream": "https://github.com/Devolutions/IronRDP",
+  "revision": "38b074e4befeed6dd25a67decf3558bb9e7762f9",
+  "changes": [
+    "Inject a product-owned duplex stream while retaining original TLS and CredSSP endpoint identity.",
+    "Expose product-owned audio playback factory to apply the per-session mute control.",
+    "Expose an async bounded input sender to preserve input ordering under backpressure.",
+    "Expose a clipboard transport barrier so file response memory stays bounded until queued payloads have been written."
+  ],
+  "license": "MIT OR Apache-2.0"
+}

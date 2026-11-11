@@ -1,0 +1,190 @@
+name: Desktop packages (macOS and Windows)
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: Validated application version
+        value: ${{ jobs.metadata.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: '1.97.1'
+      - name: Verify a clean source export and release rules
+        run: python scripts/ci/check-source.py
+      - name: Resolve and validate version
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          args=()
+          if [[ "$REF_TYPE" == tag ]]; then args+=(--tag "$REF_NAME"); fi
+          python scripts/release.py version "${args[@]}" --github-output "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: metadata
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            arch: x64
+            runner: macos-15-intel
+            rust-host: x86_64-apple-darwin
+          - platform: macos
+            arch: arm64
+            runner: macos-15
+            rust-host: aarch64-apple-darwin
+          - platform: windows
+            arch: x64
+            runner: windows-2022
+            rust-host: x86_64-pc-windows-msvc
+          - platform: windows
+            arch: arm64
+            runner: windows-11-arm
+            rust-host: aarch64-pc-windows-msvc
+    env:
+      RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+      RELEASE_ARCH: ${{ matrix.arch }}
+      CARGO_TERM_COLOR: always
+      # Bound memory and test artifact sizes on the smaller ARM runners.
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1-${{ matrix.rust-host }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          architecture: ${{ matrix.arch }}
+      # Node builds the Windows frontend and runs SSH fixtures; it is excluded from packages.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          architecture: ${{ matrix.arch }}
+          cache: npm
+          cache-dependency-path: |
+            apps/windows/package-lock.json
+            tests/node/package-lock.json
+      - name: Verify native Rust architecture and CMake
+        env:
+          RUST_HOST: ${{ matrix.rust-host }}
+        shell: bash
+        run: |
+          rustc -vV | grep -Fx "host: $RUST_HOST"
+          cmake --version
+      - name: Check repository independence and packaging tests
+        shell: bash
+        run: |
+          python scripts/verify-independence.py
+          python -m unittest discover -s tests/release -v
+
+      - name: Select pinned Xcode and install Metal toolchain
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: bash scripts/ci/select-xcode.sh
+      - name: Build and test macOS
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          cargo test --locked --workspace
+          cargo test --locked --release --manifest-path engines/rdp/Cargo.toml
+          npm ci --prefix tests/node --ignore-scripts --no-audit --no-fund
+          bash scripts/build-macos.sh
+          export TERMPILOT_TEST_ENGINE="$PWD/target/release/termpilot-engine"
+          export TERMPILOT_AI_ENGINE="$TERMPILOT_TEST_ENGINE"
+          node --test tests/node/native-worker.test.cjs tests/node/batch-worker.test.cjs
+          cd apps/macos
+          swift test --build-system native -c release -Xswiftc -DDEBUG
+      - name: Package and audit macOS
+        if: matrix.platform == 'macos'
+        env:
+          TERMPILOT_RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+          TERMPILOT_BUILD_NUMBER: ${{ github.run_number }}
+        shell: bash
+        run: |
+          # Rebuild Release without the Swift test-only DEBUG flag before signing.
+          bash scripts/package-macos.sh
+          python scripts/verify-release.py dist/TermPilot.app
+          python scripts/release.py archive --platform macos --arch "$RELEASE_ARCH" --version "$RELEASE_VERSION" --input dist/TermPilot.app
+
+      - name: Build, test and audit Windows
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: ./scripts/build-windows.ps1 -Architecture $env:RELEASE_ARCH -Version $env:RELEASE_VERSION
+      - name: Package Windows portable application
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: python scripts/release.py archive --platform windows --arch $env:RELEASE_ARCH --version $env:RELEASE_VERSION --input "dist/windows-$env:RELEASE_ARCH"
+
+      - name: Audit final archives before upload
+        shell: bash
+        run: |
+          for archive in dist/release/*.zip; do
+            python scripts/audit-privacy.py "$archive"
+          done
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v6
+        with:
+          name: TermPilot-package-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/release/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+          overwrite: true
+
+  collect:
+    name: Collect four packages and SHA256 checksums
+    needs: [metadata, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: TermPilot-package-*
+          merge-multiple: true
+          path: dist/release
+      - name: Require all four archives and generate checksums
+        env:
+          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
+        run: python scripts/release.py checksums dist/release --version "$RELEASE_VERSION"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: TermPilot-release-${{ needs.metadata.outputs.version }}
+          path: dist/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          overwrite: true

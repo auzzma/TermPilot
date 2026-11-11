@@ -1,0 +1,33 @@
+[workspace]
+members = ["crates/termpilot-core", "crates/termpilot-ai", "crates/termpilot-mobile", "engines/rust"]
+resolver = "2"
+exclude = ["vendor/ironrdp-client", "engines/rdp", "vendor/picky-mobile", "vendor/sspi-mobile", "vendor/ironrdp-tls-mobile"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "debuginfo"
+
+# Keep host-only build scripts/proc macros loadable on macOS with Xcode 27.
+# Stripping their dylibs can produce a misaligned LINKEDIT string pool.
+# Runtime libraries and shipped executables retain the release strip policy.
+[profile.release.build-override]
+strip = "none"
+
+# Mobile links SSH and RDP together; keep the standalone desktop RDP lock unchanged.
+[patch.crates-io]
+picky = { path = "vendor/picky-mobile" }
+sspi = { path = "vendor/sspi-mobile" }
+
+[patch."https://github.com/Devolutions/IronRDP"]
+ironrdp-tls = { path = "vendor/ironrdp-tls-mobile" }
+
+# Xcode 27's strip step can leave newly built proc-macro dylibs with a
+# misaligned LINKEDIT string pool. Host build tools are never shipped.
+[profile.release.package.num-derive]
+strip = "none"

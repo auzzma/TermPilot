@@ -1,0 +1,587 @@
+/* Windows uses the system title bar. Content begins with a single workspace
+   toolbar; reserve no macOS traffic-light inset inside the webview. */
+:root {
+  --bg-app: #202020;
+  --bg-sidebar: #252525;
+  --bg-panel: #202020;
+  --bg-titlebar: #272727;
+  --bg-elevated: #2b2b2b;
+  --bg-hover: #333333;
+  --bg-active: #35485f;
+  --border: #353535;
+  --border-strong: #484848;
+  --text-primary: #e8e8e8;
+  --text-secondary: #adadad;
+  --text-tertiary: #909090;
+  --control-background: #303030;
+  --field-background: #1a1a1a;
+  --selection-background: #393939;
+  font-family:
+    "Segoe UI Variable",
+    "Segoe UI",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  font-size: 13px;
+}
+
+:root[data-theme="light"] {
+  --bg-app: #f5f5f5;
+  --bg-sidebar: #efefef;
+  --bg-panel: #fafafa;
+  --bg-titlebar: #f3f3f3;
+  --bg-elevated: #ffffff;
+  --bg-hover: #e5e5e5;
+  --bg-active: #d9e8fa;
+  --border: #dedede;
+  --border-strong: #c6c6c6;
+  --text-primary: #242424;
+  --text-secondary: #626262;
+  --text-tertiary: #737373;
+  --control-background: #ffffff;
+  --field-background: #ffffff;
+  --selection-background: #ffffff;
+}
+
+/* Keep the Windows palette identical for explicit light mode and system light
+   mode. The base stylesheet's media query cannot supply Windows-only tokens. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg-app: #f5f5f5;
+    --bg-sidebar: #efefef;
+    --bg-panel: #fafafa;
+    --bg-titlebar: #f3f3f3;
+    --bg-elevated: #ffffff;
+    --bg-hover: #e5e5e5;
+    --bg-active: #d9e8fa;
+    --border: #dedede;
+    --border-strong: #c6c6c6;
+    --text-primary: #242424;
+    --text-secondary: #626262;
+    --text-tertiary: #737373;
+    --control-background: #ffffff;
+    --field-background: #ffffff;
+    --selection-background: #ffffff;
+  }
+}
+
+body {
+  font-family: inherit;
+}
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  box-shadow: none;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+}
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input,
+select,
+textarea {
+  background: var(--field-background);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.app-sidebar {
+  background: var(--bg-sidebar);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.sidebar-brand {
+  display: flex;
+  min-height: 44px;
+  flex: 0 0 44px;
+  gap: 4px;
+  padding: 0 10px 0 16px;
+}
+.sidebar-brand strong {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.sidebar-brand > button {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+.sidebar-management-buttons {
+  gap: 6px;
+  padding: 6px 12px 9px;
+}
+.sidebar-management-buttons button {
+  height: 27px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--control-background);
+  border-color: var(--border);
+  border-radius: 6px;
+}
+.sidebar-management-buttons button:last-child {
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: transparent;
+}
+.sidebar-management-buttons button:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.sidebar-management-buttons button.is-active {
+  color: white;
+  background: var(--accent);
+}
+.sidebar-search {
+  min-height: 29px;
+  margin: 0 12px 8px;
+  gap: 7px;
+  align-items: center;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.sidebar-search:focus-within {
+  border-color: var(--accent);
+}
+.sidebar-search svg {
+  flex-shrink: 0;
+}
+.sidebar-search input {
+  height: 27px;
+  font-weight: 400;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+  background: transparent;
+}
+.sidebar-hosts-label {
+  height: 30px;
+  flex-basis: 30px;
+  padding: 8px 16px 0;
+  border: 0;
+  font-size: 11px;
+}
+.host-tree {
+  padding: 0 8px 10px;
+}
+.host-row {
+  min-height: 49px;
+  gap: 7px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+}
+.host-row-label {
+  gap: 3px;
+}
+.host-row-label strong {
+  font-size: 12px;
+}
+.host-row-label small {
+  font-family: inherit;
+  font-size: 10px;
+}
+.host-group-row {
+  font-weight: 500;
+}
+.sidebar-settings-entry {
+  padding: 8px;
+  background: transparent;
+}
+.sidebar-settings-entry button {
+  font-weight: 500;
+}
+.app-sidebar-resizer::after,
+.workspace-side-panel-resizer::after {
+  background: var(--border);
+}
+
+.workspace-area {
+  grid-template-rows: 44px minmax(0, 1fr);
+}
+.workspace-tabs {
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px 5px 6px;
+  background: var(--bg-titlebar);
+}
+.workspace-tab-scroll {
+  align-items: center;
+  gap: 4px;
+}
+.workspace-tab {
+  width: 168px;
+  min-width: 116px;
+  flex: 0 1 168px;
+  height: 32px;
+  gap: 7px;
+  padding-inline: 11px 5px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.workspace-tab-title {
+  font-size: 12px;
+}
+.workspace-tab.is-active {
+  color: var(--text-primary);
+  background: var(--selection-background);
+  border-color: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+.workspace-tab:not(.is-active) .tab-close {
+  opacity: 0;
+}
+.workspace-tab:hover .tab-close,
+.workspace-tab:focus-within .tab-close {
+  opacity: 1;
+}
+.workspace-actions {
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.workspace-actions .icon-button {
+  width: 28px;
+  height: 28px;
+}
+.workspace-actions svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
+.sidebar-restore-button {
+  top: 8px;
+  left: 6px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+}
+.app-shell.is-sidebar-collapsed .workspace-tabs {
+  padding-left: 42px;
+}
+
+.workspace-side-panel {
+  grid-template-rows: 44px 28px minmax(0, 1fr);
+  border-left: 0;
+}
+.side-panel-tabs {
+  gap: 3px;
+  padding: 7px 8px;
+  background: var(--bg-panel);
+}
+.panel-tab {
+  width: 32px;
+  min-width: 0;
+  flex: 0 1 32px;
+  height: 29px;
+  border-radius: 6px;
+}
+.side-panel-tabs > .icon-button {
+  flex-shrink: 0;
+}
+.side-panel-account-bar {
+  gap: 12px;
+  padding: 0 12px;
+  background: transparent;
+}
+.side-panel-account-bar > span {
+  flex: 1;
+  overflow: hidden;
+  gap: 5px;
+}
+.side-panel-account-bar > span:last-child {
+  justify-content: flex-end;
+}
+.side-panel-account-bar svg {
+  flex-shrink: 0;
+}
+.side-panel-account-bar .account-label {
+  flex-shrink: 0;
+}
+.side-panel-account-bar strong {
+  min-width: 0;
+  font-weight: 500;
+}
+.side-panel-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.settings-surface {
+  grid-template-columns: 164px minmax(0, 1fr);
+}
+.settings-sidebar {
+  gap: 3px;
+  padding: 15px 10px;
+  background: var(--bg-sidebar);
+}
+.settings-sidebar h2 {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.settings-sidebar button {
+  min-height: 33px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+}
+.settings-detail {
+  background: var(--bg-app);
+}
+.settings-card {
+  border-radius: 8px;
+}
+.modal-card {
+  border-radius: 12px;
+  border-color: var(--border-strong);
+}
+.quick-connect-form label,
+.settings-card label {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 1000px) {
+  .workspace-tabs {
+    gap: 5px;
+  }
+  .workspace-tab {
+    min-width: 100px;
+  }
+  .workspace-actions {
+    gap: 0;
+    padding-left: 5px;
+  }
+  .settings-surface {
+    grid-template-columns: 144px minmax(0, 1fr);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  button,
+  .workspace-tab {
+    transition: none;
+  }
+}
+
+/* Keep terminal controls readable without changing the terminal's own font. */
+.terminal-pane {
+  grid-template-rows: 36px minmax(0, 1fr);
+}
+.terminal-tabs {
+  align-items: center;
+}
+.terminal-tab {
+  height: 34px;
+}
+.terminal-tab > span:nth-child(2) {
+  font-family: inherit;
+  font-size: 11px;
+}
+.terminal-status {
+  font-family: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.terminal-tab-actions {
+  gap: 1px;
+}
+.side-tool-empty {
+  min-height: 180px;
+  gap: 12px;
+}
+.side-tool-empty strong {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.ai-empty .ai-setup-button {
+  padding: 6px 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--control-background);
+  color: var(--text-primary);
+}
+.ai-header select {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Theme-owned AI popups, including their option/group surfaces. */
+.themed-select {
+  min-width: 0;
+}
+.ai-header .ai-agent-select {
+  flex: 1;
+}
+.themed-select .themed-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-primary);
+  background: transparent;
+  text-align: left;
+  font-size: inherit;
+}
+.themed-select-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.themed-select-trigger > svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.themed-select .themed-select-trigger:hover,
+.themed-select .themed-select-trigger[aria-expanded="true"] {
+  background: var(--bg-hover);
+}
+.ai-composer .themed-select {
+  max-width: 130px;
+  font-size: 11px;
+}
+.themed-select-menu {
+  z-index: 2000;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
+  font-size: 13px;
+}
+.themed-select-group,
+.themed-select-empty {
+  padding: 7px 9px 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.themed-select-menu [role="option"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 30px;
+  gap: 10px;
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 5px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-primary);
+  background: transparent;
+}
+.themed-select-menu [role="option"] > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.themed-select-menu [role="option"] > svg {
+  flex-shrink: 0;
+}
+.themed-select-menu [role="option"].is-active {
+  background: var(--accent);
+  color: white;
+}
+/* Native selectors elsewhere in AI settings also need explicit option colors. */
+.ai-settings option,
+.ai-settings optgroup {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+/* Window-bounded transfer center shared by SFTP and remote desktops. */
+.file-transfer-activity { position:fixed; right:12px; z-index:65; width:min(560px, calc(100vw - 24px)); display:flex; flex-direction:column; border:1px solid var(--border); border-radius:12px; background:var(--bg-elevated); color:var(--text-primary); box-shadow:0 8px 28px #0003; overflow:hidden; }
+.file-transfer-activity header { display:flex; align-items:center; gap:8px; padding:10px 12px; border-bottom:1px solid var(--border); }
+.file-transfer-activity header strong { flex:1; }
+.file-transfer-activity button { color:inherit; background:transparent; border:0; border-radius:5px; padding:5px; display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }
+.file-transfer-activity button:hover { background:var(--bg-hover); }
+.file-transfer-activity button:disabled { opacity:.45; cursor:wait; }
+.file-transfer-activity-list { min-height:0; max-height:345px; flex:1; overflow:auto; padding:0 12px; }
+.file-transfer-activity-list article { padding:12px 0; border-bottom:1px solid var(--border); }
+.file-transfer-name { display:flex; align-items:center; gap:8px; }
+.file-transfer-name strong { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; font-weight:500; }
+.file-transfer-activity progress { display:block; width:100%; height:5px; accent-color:var(--accent); margin:7px 0; }
+.file-transfer-detail { display:flex; justify-content:space-between; gap:8px; color:var(--text-secondary); font-size:11px; line-height:1.6; font-variant-numeric:tabular-nums; }
+.file-transfer-activity .file-transfer-summary { display:flex; width:100%; gap:9px; padding:10px 12px; font-size:12px; font-variant-numeric:tabular-nums; }
+.file-transfer-summary span:last-child { margin-left:auto; }
+.file-transfer-error { font-size:11px; color:var(--danger, #dc4141); margin:5px 0; overflow-wrap:anywhere; }
+
+.settings-surface,.settings-detail,.settings-sidebar {min-width:0;min-height:0;overflow:hidden;}
+.settings-general-scroll {container-type:inline-size}
+@container (max-width:480px) {
+  .range-setting {grid-template-columns:minmax(0,1fr) auto}
+  .range-setting>span {grid-column:1/-1}
+}
+.settings-category-list {min-height:0;overflow:auto;display:flex;flex-direction:column;gap:3px}
+.settings-sidebar .settings-about-entry {flex:none}
+.settings-form {width:auto;max-width:none;margin:24px clamp(12px,2.5%,24px) 40px}
+.quick-detail-toggle {display:inline-flex;align-items:center;gap:6px;justify-self:start}
+.batch-workspace {height:100%;min-width:0;min-height:0;display:flex;flex-direction:column}
+.batch-workspace .batch-workbench {flex:1;min-height:0}
+.batch-job-toolbar {display:flex;align-items:center;position:relative;gap:10px;padding:8px 18px;border-bottom:1px solid var(--border)}
+.batch-job-strip {display:flex;gap:6px;overflow:auto;flex:1;min-width:0;scrollbar-width:thin}
+.batch-job-strip>div {display:flex;flex:none;align-items:center;border-radius:6px;background:var(--bg-panel)}
+.batch-job-strip>div.is-active {background:color-mix(in srgb,var(--accent) 18%,var(--bg-panel))}
+.batch-job-strip button,.batch-new-actions button,.batch-new-actions summary {display:inline-flex;align-items:center;gap:5px;color:inherit;background:transparent;border:0;padding:6px;cursor:pointer}
+.batch-job-strip [role=tab] {touch-action:none;user-select:none}.batch-job-strip [role=tab] span {max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.batch-job-strip small,.batch-muted {color:var(--text-secondary)}
+.batch-job-strip input {width:150px}.batch-new-actions {display:flex;flex:none;background:var(--bg-panel);border-radius:5px}
+.batch-new-actions details {position:relative}.batch-new-actions details>div {position:absolute;right:0;z-index:15;white-space:nowrap;background:var(--bg-elevated);border:1px solid var(--border);padding:4px}
+.batch-job-drop-line {position:absolute;top:9px;bottom:9px;width:2px;background:var(--accent);pointer-events:none;margin-left:18px}
+.batch-results-heading {gap:8px}.batch-results-heading h3 {margin-right:auto}
+.batch-prompt-card {position:fixed;z-index:80;bottom:12px;right:12px;width:min(400px,calc(100vw - 24px));padding:16px;background:var(--bg-elevated);color:var(--text-primary);border:1px solid var(--border);border-radius:10px;box-shadow:0 5px 20px #0003}
+.transfer-trigger {position:relative}.transfer-trigger small {font-size:10px}.transfer-trigger i {position:absolute;right:2px;top:2px;background:#db892b;width:5px;height:5px;border-radius:50%}
+.file-transfer-activity header small {display:block;font-size:11px;color:var(--text-secondary);margin-top:3px}
+.transfer-filters {display:grid;grid-template-columns:repeat(6,minmax(0,1fr));margin:8px 12px;padding:3px;border-radius:7px;background:var(--bg-panel)}
+.transfer-filters button {min-width:0;flex-direction:column;font-size:11px}.transfer-filters button[aria-pressed=true] {background:var(--accent);color:white}
+.transfer-empty {min-height:130px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-secondary)}
+.file-transfer-summary {border-top:1px solid var(--border)}.file-transfer-detail span {min-width:0;overflow-wrap:anywhere}
+.ai-composer-suggestions {display:flex;flex-wrap:wrap;gap:4px;max-height:130px;overflow:auto}
+.ai-composer-suggestions button {text-align:left}
+.ai-model-picker {position:relative}
+.ai-model-picker section {position:absolute;bottom:100%;left:0;z-index:5;width:min(400px,100%);max-height:min(350px,45vh);overflow:auto;background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px;padding:10px}
+.ai-model-picker section input {width:100%}
+.ai-model-picker section header,.ai-model-option {display:flex;justify-content:space-between;align-items:center;gap:5px}
+.ai-model-option button:first-child {min-width:0;overflow-wrap:anywhere;text-align:left}
+
+/* Reusable batch jobs: workspace-level library, per-job save controls. */
+.batch-library-button {display:inline-flex;align-items:center;gap:6px;flex:none;padding:7px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-panel);color:inherit;cursor:pointer}
+.batch-library-dialog {width:min(780px,90vw)}
+.batch-library-dialog .batch-dialog-body>input {width:100%;box-sizing:border-box}
+.batch-library-list {max-height:360px;overflow:auto;min-height:160px}
+.batch-library-row {display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
+.batch-library-name {flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;text-align:left;background:transparent!important;border:0!important}
+.batch-library-name strong {max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.batch-library-row small,.batch-library-row time,.batch-save-controls small {font-size:11px;color:var(--text-secondary)}
+.batch-library-row details {position:relative}.batch-library-row summary {cursor:pointer;list-style:none}
+.batch-library-menu {position:absolute;right:0;top:20px;z-index:3;display:flex;flex-direction:column;min-width:120px;padding:6px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px}
+.batch-library-edit {display:flex;align-items:center;gap:10px;padding:12px;background:var(--bg-panel)}
+.batch-library-edit label,.batch-library-edit p {flex:1}.batch-library-edit input {display:block;width:100%;box-sizing:border-box}
+.batch-save-controls {display:flex;flex-direction:column;gap:3px;align-items:flex-end}.batch-save-dialog {width:min(480px,90vw)}
+.batch-save-dialog label,.batch-save-dialog input {display:block;width:100%;box-sizing:border-box}.batch-save-dialog form {display:grid;gap:14px}
+.batch-storage-error {display:flex;align-items:center;gap:12px;padding:8px 18px;color:var(--danger,#e66);font-size:12px}
+.batch-storage-error button {margin-left:auto;flex:none}
+@media(max-width:1050px){.batch-toolbar{flex-wrap:wrap}.batch-library-row time{display:none}}

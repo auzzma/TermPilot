@@ -1,0 +1,1 @@
+SSPI 0.21.3 from crates.io; original licenses retained. Mobile workspace only: manifests select stable RustCrypto versions required by the shared SSH engine, matching vendor/picky-mobile. No authentication protocol logic changed. Standalone desktop RDP dependency resolution is unchanged.

@@ -1,0 +1,28 @@
+TermPilot — Source and Licenses
+
+The shared Rust connection engine implements SSH, SFTP/SCP, proxy transports,
+VNC, and Apple high-performance screen sharing. Native media decoding uses
+Apple VideoToolbox and AudioToolbox through a statically linked Swift adapter.
+The application does not bundle or launch Node.js or Python.
+
+Apple protocol code derives from iShareScreen by renegadelink:
+https://github.com/renegadelink/iShareScreen
+Pinned revision: 9ab40d3a3151524f954cff9d6239d891197c1705
+GNU AGPL version 3 or later. This software comes WITHOUT ANY WARRANTY.
+TermPilot core and original application code retain their applicable licenses.
+
+The application bundle includes:
+Contents/Resources/TermPilot-CorrespondingSource.tar.gz
+Contents/Resources/LICENSE.txt
+Contents/Resources/LICENSE-ISHARESCREEN.txt
+Contents/Resources/NOTICE.md
+Contents/Resources/Licenses/dependencies.json
+
+Choose “Screen Sharing Source and Licenses” in About TermPilot to locate
+corresponding source, build instructions, dependency notices, and licenses.
+Redistributors must preserve the applicable licenses and source obligations.
+
+High-performance scope: macOS, local network, one 1920 × 1080 SDR virtual
+screen, one active session. High-performance application proxies and Windows
+high-performance media remain unavailable. Standard VNC uses the Rust engine
+on both platforms.

@@ -1,0 +1,6 @@
+https://github.com/renegadelink/iShareScreen
+9ab40d3a3151524f954cff9d6239d891197c1705
+AGPL-3.0-or-later
+TermPilot modifications: parse and verify the framed SRP server proof; no authentication downgrade; exclusive UDP binds; connection-stage callbacks; propagate session-choice cancellation; disable local clipboard imports/writes when ISS_CLIP=0 while retaining explicit protocol callbacks.
+2026-10-01: native clipboard notification/result callbacks; ISS_CLIP=0 prevents automatic fetches, with request ownership and local pasteboard synchronization handled by Swift.
+2026-10-01: per-session TCP/UDP payload byte counters for live receive/send rates; transparent socket delegation, no packet content logging or capture, authentication traffic excluded.

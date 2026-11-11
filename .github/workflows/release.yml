@@ -1,0 +1,79 @@
+name: Package TermPilot
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      android_signed:
+        description: Sign Android APKs with repository signing secrets
+        type: boolean
+        default: false
+      ios_signed:
+        description: Also create an IPA for provisioned devices
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  packages:
+    uses: ./.github/workflows/build-packages.yml
+
+  mobile:
+    uses: ./.github/workflows/mobile.yml
+    with:
+      android_signed: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed || false }}
+      ios_signed: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed || false }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+      ANDROID_KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEY_ALIAS || '' }}
+      ANDROID_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEY_PASSWORD || '' }}
+      IOS_CERTIFICATE_P12_BASE64: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed && secrets.IOS_CERTIFICATE_P12_BASE64 || '' }}
+      IOS_CERTIFICATE_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed && secrets.IOS_CERTIFICATE_PASSWORD || '' }}
+      IOS_PROVISION_PROFILE_BASE64: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed && secrets.IOS_PROVISION_PROFILE_BASE64 || '' }}
+
+  publish:
+    name: Publish tagged GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [packages, mobile]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: TermPilot-release-${{ needs.packages.outputs.version }}
+          path: dist/release
+      - uses: actions/download-artifact@v7
+        with:
+          name: TermPilot-Android
+          path: dist/mobile/android
+      - uses: actions/download-artifact@v7
+        with:
+          name: TermPilot-iOS-iPadOS
+          path: dist/mobile/ios
+      - name: Publish validated packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          files=(dist/release/*.zip dist/release/SHA256SUMS.txt
+                 dist/mobile/android/TermPilot-*-android.zip
+                 dist/mobile/android/TermPilot-*-android.zip.sha256
+                 dist/mobile/ios/TermPilot-*-ios-ipados.zip
+                 dist/mobile/ios/TermPilot-*-ios-ipados.zip.sha256)
+          for file in "${files[@]}"; do test -s "$file"; done
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${files[@]}" --verify-tag --generate-notes
+          fi

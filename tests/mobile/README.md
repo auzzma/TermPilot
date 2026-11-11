@@ -1,0 +1,13 @@
+# Mobile verification
+
+Native tests run in isolated app containers. `media_probe.c` checks four HEVC 4:4:4 tiles and AAC-ELD-SBR PCM using the same pinned fixture as desktop codec tests. Live SSH tests are skipped unless a developer supplies `mobile-fixture.json` in the test application cache. This file is never bundled and is removed by the tests. Its schema is `{ "hosts": [ <resolved SSH configuration> ], "knownHosts": "<verified known_hosts contents>" }`. Never accept unknown host keys in unattended tests.
+
+Each live test creates a random `TermPilot-mobile-test-*` directory in the authenticated account's home, transfers 2 MiB (or 200 MiB on the selected speed-test host) with a Unicode filename, renames it, downloads it, compares SHA-256 and deletes that test directory. Configuration or credential JSON must not appear in logs or artifacts.
+
+UI tests exercise settings, themes, quick connection, Chinese/English switching, configurable shortcuts and AI safety/search settings on phone/tablet layouts. NativeFeaturesTests checks key mappings and actual FinderInfo metadata detection without changing the source file; iOS also checks script ordering. They do not establish hardware performance, system drag-and-drop, or background lifetime guarantees.
+
+HostKeyPersistenceTests starts with no `known_hosts`, approves only a fingerprint already listed in the private fixture's `verifiedHostKeys` map (host pattern to public-key base64 strings), verifies the accepted pin was written, destroys/reopens the runtime, and checks reconnection and SFTP without another prompt. Run it explicitly with a staged fixture; a pre-seeded known_hosts roundtrip does not cover this first-use path. No unverified keys are accepted automatically.
+
+AppFlowTests uses the actual native AppModel to upload 64 MiB, pause, verify the durable paused record and resume to completion. It also checks connection history, AI conversation initialization and the OS transfer adapter. Live fixtures are optional; a skipped fixture test is not evidence of a successful live connection.
+
+AppFlowTests exercises the actual native AppModel, connection history, per-host AI conversation creation and OS background transfer adapter. iOS LiveConnectionTests also interrupts an upload, rejects a modified source, reconnects, validates the retained prefix, checks non-overwrite and folder/empty-file roundtrips. An optional `largeMiB` fixture field raises the speed-host test up to 1024 MiB. Screen/RDP fixtures are independent, never automatically accepted, and require verified SSH host keys or an exact approved RDP certificate pin. Android high-performance UDP reception remains a separate device acceptance item.

@@ -1,34 +1,161 @@
-# macOS
-.DS_Store
+# Publish only application sources, build/CI inputs, notices and bilingual READMEs.
+# Local plans, acceptance evidence and tooling remain on disk, outside Git.
+/*
+!/.gitignore
+!/.gitattributes
+!/.editorconfig
+!/.github/
+!/README.md
+!/README.zh-CN.md
+!/LICENSE
+!/NOTICE.md
+!/Cargo.toml
+!/Cargo.lock
+!/rust-toolchain.toml
+!/apps/
+!/bindings/
+!/crates/
+!/engines/
+!/scripts/
+!/tests/
+!/vendor/
 
-# Swift build output
-.build/
-.build-arm64/
-.build-x86_64/
+# Only the maintained clients and dependency source trees belong in Git.
+/.github/*
+!/.github/workflows/
+/apps/*
+!/apps/macos/
+!/apps/windows/
+!/apps/ios/
+!/apps/android/
+!/apps/mobile/
+/vendor/*
+!/vendor/libde265/
+!/vendor/fdk-aac/
+!/vendor/ironrdp-client/
+!/vendor/ironrdp-tls-mobile/
+!/vendor/picky-mobile/
+!/vendor/sspi-mobile/
+# Upstream CI and auxiliary developer programs are not TermPilot build inputs.
+/vendor/**/.github/
+/vendor/sspi-mobile/tools/
+/scripts/package-nuget-licenses.py
+
+# The current clients use the C binding and Rust/Tauri, not the old .NET binding.
+/bindings/*
+!/bindings/c/
+!/bindings/mobile/
+!/bindings/swift/
+
+# Keep the tests and fixtures used by the four-architecture build.
+/tests/*
+!/tests/mobile/
+!/tests/node/
+!/tests/media-codec/
+!/tests/fixtures/
+!/tests/release/
+!/tests/windows-launcher/
+!/tests/migration-poc/
+/tests/migration-poc/*
+!/tests/migration-poc/fixtures/
+# Referenced by the opt-in Swift RDP integration test; contains no saved secrets.
+!/tests/migration-poc/remote_config.py
+
+# Build outputs, downloaded tools/dependencies and local application data.
+target/
+.tools/
+.build*/
 .swiftpm/
-DerivedData/
-dist/
-
-# Bundled and downloaded runtimes
-Vendor/ssh2-bridge-runtime/
+# Scope Swift downloads explicitly: macOS Git may match Vendor and vendor alike.
+/apps/macos/Vendor/
 .runtime-cache/
-.build-swift-sftp-save
-
-# Local diagnostics and configuration
-.dbg/
-.env
-.env.*
-!.env.example
+.release-staging/
+dist/
+bin/
+obj/
+node_modules/
+build/
+.cache/
+.pytest_cache/
+__pycache__/
+AppData/
+*.pyc
 *.log
-
-# Signing credentials
-*.key
-*.pem
+*.tsbuildinfo
+.idea/
+.vscode/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcresult/
+*.xcarchive/
+*.app/
+*.dSYM/
+*.apk
+*.aab
+*.ipa
 *.p12
 *.pfx
 *.mobileprovision
+*.provisionprofile
+*.keystore
+*.jks
+*.tpbackup
+*.key
+*.pem
+!vendor/ironrdp-tls-mobile/tests/certs/server-cert.pem
+!vendor/ironrdp-tls-mobile/tests/certs/server-key.pem
+id_rsa*
+id_ed25519*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+credential.key
+known_hosts
+mobile-live-fixture.json
+mobile-fixture.json
+mobile-*-fixture.json
+rdp-*-fixture.json
+local.properties
+key.properties
+*.local
+.DS_Store
+._*
+.env
+.env.*
+*.env
 
-# Xcode user state
-*.xcuserstate
-*.xccheckout
-xcuserdata/
+# Generated macOS inputs are recreated by sync-resources.py / stamp-core.py.
+/apps/macos/Sources/CTermPilotCore/include/termpilot_core.h
+/apps/macos/Sources/TermPilotCore/CoreBuildStamp.swift
+/apps/macos/Sources/TermPilotApp/Resources/ssh2-bridge/
+/apps/macos/Sources/TermPilotApp/Resources/sftp-bridge/
+/apps/macos/Sources/TermPilotApp/Resources/proxy-bridge/
+/apps/macos/Sources/TermPilotApp/Resources/keygen/
+/apps/macos/Sources/TermPilotApp/Resources/screen-sharing-*.py
+/apps/macos/ThirdParty/
+
+# Retired interpreter packaging and unused icon variants.
+/apps/macos/patches/
+/apps/macos/scripts/scan-release-payload.mjs
+/apps/macos/Resources/NodeRuntime.entitlements.plist
+/apps/macos/Resources/ScreenSharingRuntime.entitlements.plist
+/apps/macos/Resources/TermPilotIcon-v*
+/apps/windows/src-tauri/gen/
+/apps/windows/src-tauri/icons/android/
+/apps/windows/src-tauri/icons/ios/
+
+# Mobile build outputs and machine-local SDK settings.
+/apps/ios/TermPilot.xcodeproj/
+/apps/ios/Frameworks/
+/apps/ios/.derived/
+/apps/android/.gradle/
+/apps/android/local.properties
+/apps/android/**/build/
+/apps/android/app/src/main/jniLibs/
+
+/apps/ios/.generated/
