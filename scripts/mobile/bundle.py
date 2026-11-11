@@ -43,7 +43,9 @@ for line in (folder/'SHA256SUMS').read_text().splitlines():
         raise SystemExit('Mobile artifact checksum mismatch: '+name)
 if not (set(required) - {'SHA256SUMS'}) <= checksums.keys():
     raise SystemExit('Required mobile artifacts are absent from the checksum manifest')
-with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as archive:
+# Dependency notices can retain reproducible timestamps from before 1980.
+# Clamp ZIP metadata only; preserve the original notice bytes and source files.
+with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
     for name in sorted(checksums.keys() | {'SHA256SUMS'}):
         archive.write(folder/name, f'TermPilot/{name}')
     for path in sorted((folder/'Licenses').rglob('*')):

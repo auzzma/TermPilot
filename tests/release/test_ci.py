@@ -1,5 +1,6 @@
 import importlib.util
 import hashlib
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import shutil
@@ -16,6 +17,17 @@ spec.loader.exec_module(sign_ios)
 
 
 class SourcePolicyTests(unittest.TestCase):
+    def test_independence_check_reads_utf8_under_windows_default_encoding(self):
+        probe = '''
+import io, runpy, sys
+from unittest.mock import patch
+with patch.object(io, 'text_encoding', side_effect=lambda encoding, *args: encoding or 'cp1252'):
+    runpy.run_path(sys.argv[1], run_name='__main__')
+'''
+        result = subprocess.run([sys.executable, '-c', probe, str(ROOT/'scripts/verify-independence.py')],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_build_inputs_survive_but_machine_data_and_outputs_are_excluded(self):
         # A fresh index prevents a developer's global excludes from affecting CI.
         with tempfile.TemporaryDirectory() as folder:
@@ -128,3 +140,15 @@ class MobileBundleTests(unittest.TestCase):
         self.checksums['debug.log'] = hashlib.sha256(b'not distributable').hexdigest()
         self.manifest()
         self.assertIn('Invalid checksum filename', self.run_bundle().stderr)
+
+    def test_reproducible_notice_timestamps_do_not_prevent_packaging(self):
+        notice = self.output/'Licenses/NOTICE.txt'
+        original = notice.read_bytes()
+        os.utime(notice, (0, 0))
+        result = self.run_bundle()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with zipfile.ZipFile(self.output/'TermPilot-0.2.0-android.zip') as bundle:
+            name = 'TermPilot/Licenses/NOTICE.txt'
+            self.assertEqual(bundle.read(name), original)
+            self.assertEqual(bundle.getinfo(name).date_time, (1980, 1, 1, 0, 0, 0))
+        self.assertEqual(notice.stat().st_mtime, 0)

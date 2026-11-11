@@ -3,6 +3,17 @@ import SwiftUI
 import TermPilotDomain
 import TermPilotScreenSharing
 
+#if DEBUG
+// In-process SwiftUI tests cannot inspect virtual accessibility children.
+// Expose layout bounds only in test builds so native clicks follow the control.
+struct ScreenSharingLoginButtonBounds: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+#endif
+
 enum ScreenSharingEngineLocator {
     static func launch() -> ScreenSharingEngineLaunch {
         let root = Bundle.main.resourceURL ?? URL(fileURLWithPath: "/missing-TermPilot-resources")
@@ -47,6 +58,9 @@ struct ScreenSharingPane: View {
                         .disabled(!visible || !runtime.canSendLoginPassword || runtime.isEnteringLoginPassword)
                         .accessibilityIdentifier("screen-sharing-login-password")
                         .help(AppLocalization.string("First click the empty password field for the matching remote account, then click this button. Sends the credential password and Return. Press Escape to cancel."))
+                        #if DEBUG
+                        .anchorPreference(key: ScreenSharingLoginButtonBounds.self, value: .bounds) { $0 }
+                        #endif
                         if runtime.isEnteringLoginPassword {
                             Button("Cancel") { runtime.releaseInput() }
                                 .keyboardShortcut(.cancelAction)

@@ -70,6 +70,7 @@ jobs:
       RUSTUP_TOOLCHAIN: 1.97.1-${{ matrix.rust-host }}
       TERMPILOT_MACOS_ARCH: ${{ matrix.arch == 'x64' && 'x86_64' || 'arm64' }}
       CARGO_TERM_COLOR: always
+      PYTHONUTF8: '1'
       # Bound memory and test artifact sizes on the smaller ARM runners.
       CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'

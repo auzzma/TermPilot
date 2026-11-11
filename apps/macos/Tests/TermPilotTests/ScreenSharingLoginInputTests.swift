@@ -201,11 +201,19 @@ final class ScreenSharingLoginInputTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: defaultsName) }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 650), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        var loginButtonFrame = CGRect.zero
         let view = NSHostingView(rootView: ScreenSharingPane(runtime: runtime, workspaceID: try XCTUnwrap(state.activeWorkspaceID), isActive: true)
             .environmentObject(state).defaultAppStorage(defaults)
             .environment(\.locale, Locale(identifier: "zh-Hans"))
             .preferredColorScheme(.dark)
             .frame(width: 1100, height: 650)
+            .overlayPreferenceValue(ScreenSharingLoginButtonBounds.self) { anchor in
+                GeometryReader { geometry in
+                    Color.clear.onAppear {
+                        if let anchor { loginButtonFrame = geometry[anchor] }
+                    }
+                }.allowsHitTesting(false)
+            }
             .background(Color(nsColor: .windowBackgroundColor)))
         window.contentView = view
         window.makeKeyAndOrderFront(nil)
@@ -220,9 +228,10 @@ final class ScreenSharingLoginInputTests: XCTestCase {
         }
         XCTAssertEqual(runtime.lifecycle, .connected)
         XCTAssertTrue(runtime.canSendLoginPassword)
-        // Use native mouse events: SwiftUI's virtual AX children are not exposed
-        // to this in-process XCTest host. This point is inside the rendered button.
-        let point = view.convert(NSPoint(x: 885, y: view.isFlipped ? 18 : view.bounds.maxY - 18), to: nil)
+        // Click the actual rendered control instead of a fixed pixel offset.
+        XCTAssertFalse(loginButtonFrame.isEmpty)
+        let point = view.convert(NSPoint(x: loginButtonFrame.midX,
+            y: view.isFlipped ? loginButtonFrame.midY : view.bounds.maxY - loginButtonFrame.midY), to: nil)
         func event(_ type: NSEvent.EventType) throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,

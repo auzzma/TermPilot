@@ -42,7 +42,7 @@ final class MediaBrokerRecoveryTests: XCTestCase {
 
     @MainActor
     private func open(_ launch: ScreenSharingEngineLaunch) async throws -> (AppState, ScreenSharingSessionRuntime) {
-        let state = AppState(screenSharingLaunch: launch)
+        let state = AppState(vaultStore: try VaultStore(databaseURL: launch.executable.deletingLastPathComponent().appendingPathComponent("vault.sqlite")), screenSharingLaunch: launch)
         let opened = await state.openScreenSharing(hostname: "recovery.invalid", port: 5900,
             username: "fixture", password: "fixture-password", audio: false, host: nil)
         XCTAssertTrue(opened)

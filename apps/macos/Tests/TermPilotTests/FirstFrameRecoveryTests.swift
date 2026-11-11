@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import TermPilotPersistence
 @testable import TermPilotApp
 @testable import TermPilotScreenSharing
 
@@ -60,7 +61,7 @@ final class FirstFrameRecoveryTests: XCTestCase {
     func testMissingFirstFrameReconnectsOnlyThatSessionAndStopsAfterVideoArrives() async throws {
         let (directory, launch) = try fixture("recover")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let state = AppState(screenSharingLaunch: launch)
+        let state = AppState(vaultStore: try VaultStore(databaseURL: directory.appendingPathComponent("vault.sqlite")), screenSharingLaunch: launch)
         let healthy = try await open(state, host: "healthy.invalid")
         let recovering = try await open(state, host: "recovering.invalid")
         defer { state.disconnectScreenSharing(sessionID: healthy.descriptor.id); state.disconnectScreenSharing(sessionID: recovering.descriptor.id) }
@@ -76,7 +77,7 @@ final class FirstFrameRecoveryTests: XCTestCase {
     func testPersistentMissingVideoStopsAfterOneRetryAndManualReconnectGetsNewBudget() async throws {
         let (directory, launch) = try fixture("never")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let state = AppState(screenSharingLaunch: launch)
+        let state = AppState(vaultStore: try VaultStore(databaseURL: directory.appendingPathComponent("vault.sqlite")), screenSharingLaunch: launch)
         let runtime = try await open(state, host: "recovering.invalid")
         defer { state.disconnectScreenSharing(sessionID: runtime.descriptor.id) }
         try await wait { if case .failed = runtime.lifecycle { return true }; return false }
@@ -91,7 +92,7 @@ final class FirstFrameRecoveryTests: XCTestCase {
     func testUserDisconnectCancelsFirstFrameRecovery() async throws {
         let (directory, launch) = try fixture("never")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let state = AppState(screenSharingLaunch: launch)
+        let state = AppState(vaultStore: try VaultStore(databaseURL: directory.appendingPathComponent("vault.sqlite")), screenSharingLaunch: launch)
         let runtime = try await open(state, host: "recovering.invalid")
         try await wait { runtime.connectionDiagnostics == "stage=firstFrameRecovery" }
         state.disconnectScreenSharing(sessionID: runtime.descriptor.id)
@@ -104,7 +105,7 @@ final class FirstFrameRecoveryTests: XCTestCase {
     func testAuthenticationStageDoesNotTriggerMediaRetry() async throws {
         let (directory, launch) = try fixture("authenticate")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let state = AppState(screenSharingLaunch: launch)
+        let state = AppState(vaultStore: try VaultStore(databaseURL: directory.appendingPathComponent("vault.sqlite")), screenSharingLaunch: launch)
         let runtime = try await open(state, host: "recovering.invalid")
         defer { state.disconnectScreenSharing(sessionID: runtime.descriptor.id) }
         try await wait { runtime.connectionDiagnostics == "stage=authenticate" }

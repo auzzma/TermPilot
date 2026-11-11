@@ -175,7 +175,10 @@ final class HostConnectionKindTests: XCTestCase {
         XCTAssertEqual(session.port, 5901)
         XCTAssertEqual(session.username, "mac-user")
         XCTAssertEqual(session.screenSharingAudio, false)
-        XCTAssertEqual(state.screenSharingRuntimes[session.id]?.lifecycle, .disconnected)
+        // Routing succeeds, but a profile without a desktop password must fail
+        // before launching either an SSH or remote desktop helper.
+        XCTAssertEqual(state.screenSharingRuntimes[session.id]?.lifecycle,
+                       .failed("No desktop credential is available. Update the saved host or open Quick Connect again."))
         XCTAssertTrue(state.runtimes.isEmpty)
         XCTAssertNil(state.presentedError)
         await state.connect(host: host, splitAxis: .vertical)

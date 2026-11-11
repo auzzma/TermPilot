@@ -23,7 +23,7 @@ for directory, dirs, files in os.walk(ROOT):
             if not path.resolve().is_relative_to(ROOT): errors.append(f'External symlink: {relative}')
             continue
         if path.suffix not in source_suffixes or relative.parts[0] == 'docs' or name == Path(__file__).name: continue
-        content = path.read_text(errors='replace')
+        content = path.read_text(encoding='utf-8', errors='replace')
         # Provenance documentation may name old projects; executable code may not.
         if 'TermPilot-Swift' in content or 'TermPilot-Tauri' in content:
             errors.append(f'Sibling project reference: {relative}')
@@ -37,12 +37,12 @@ for folder in ('apps/windows', 'bindings', 'crates', 'scripts'):
     for path in (ROOT/folder).rglob('*'):
         if not path.is_file() or path.suffix not in source_suffixes or any(p in SKIP for p in path.parts): continue
         if path.name == Path(__file__).name: continue
-        content = path.read_text(errors='replace')
+        content = path.read_text(encoding='utf-8', errors='replace')
         if any(old in content for old in ('engines/node/', 'engines/screen-sharing/', 'tests/legacy-engines/')):
             errors.append(f'Production dependency on retired engine: {path.relative_to(ROOT)}')
 info = plistlib.loads((ROOT/'apps/macos/Resources/Info.plist').read_bytes())
 if info['CFBundleIdentifier'] != 'com.termpilot.app': errors.append('macOS app identity must be com.termpilot.app')
-vault = (ROOT/'apps/macos/Sources/TermPilotPersistence/VaultStore.swift').read_text()
+vault = (ROOT/'apps/macos/Sources/TermPilotPersistence/VaultStore.swift').read_text(encoding='utf-8')
 if 'root.appendingPathComponent("TermPilot"' not in vault: errors.append('macOS data directory must be TermPilot')
 if errors: raise SystemExit('\n'.join(errors))
 print(f'Independent checkout verified: {count} source/configuration files; no sibling references; consistent TermPilot identity.')
