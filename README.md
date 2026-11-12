@@ -18,3 +18,7 @@ TermPilot brings SSH terminals, remote desktops and server management into one a
 - **Interface**: English and Simplified Chinese, light/dark themes, and phone and tablet layouts.
 
 Feature availability varies by platform. Apple high-performance Screen Sharing remains in preview on Windows and Android.
+
+## Community
+
+Telegram：[https://t.me/Impart_Chat](https://t.me/Impart_Chat)
