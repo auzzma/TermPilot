@@ -59,19 +59,6 @@ struct AboutSettingsView: View {
                     Text(verbatim: applicationInfo.copyright)
                         .font(.body)
                         .padding(.top, 18)
-
-                    Button("Screen Sharing Source and Licenses") {
-                        if let resources = Bundle.main.resourceURL {
-                            let directory = resources.appendingPathComponent("Licenses")
-                            if FileManager.default.fileExists(atPath: directory.path) {
-                                NSWorkspace.shared.selectFile(resources.appendingPathComponent("TermPilot-CorrespondingSource.tar.gz").path, inFileViewerRootedAtPath: resources.path)
-                                return
-                            }
-                        }
-                        if let notice = AppResourceLocator.url(forResource: "ScreenSharingNotices", withExtension: "txt") {
-                            NSWorkspace.shared.open(notice)
-                        }
-                    }.padding(.top, 18)
                 }
                 .frame(maxWidth: .infinity)
                 .frame(

@@ -782,7 +782,6 @@
 "Log in to the remote Mac using the same account as this connection." = "Log in to the remote Mac using the same account as this connection.";
 "The remote Mac did not accept the 1080p virtual display." = "The remote Mac did not accept the 1080p virtual display.";
 "Metal rendering is unavailable on this Mac." = "Metal rendering is unavailable on this Mac.";
-"Screen Sharing Source and Licenses" = "Screen Sharing Source and Licenses";
 "The virtual display may blank the remote Mac's physical screen." = "The virtual display may blank the remote Mac's physical screen.";
 "Starting Screen Sharing" = "Starting Screen Sharing";
 "Resolving Remote Mac" = "Resolving Remote Mac";

@@ -782,7 +782,6 @@
 "Log in to the remote Mac using the same account as this connection." = "请使用本次连接的同一账户登录远端 Mac。";
 "The remote Mac did not accept the 1080p virtual display." = "远端 Mac 未接受 1080p 虚拟屏配置。";
 "Metal rendering is unavailable on this Mac." = "此 Mac 无法初始化 Metal 画面渲染。";
-"Screen Sharing Source and Licenses" = "屏幕共享源码与许可证";
 "The virtual display may blank the remote Mac's physical screen." = "虚拟屏模式可能会遮蔽远端 Mac 的物理屏幕。";
 "Starting Screen Sharing" = "正在启动屏幕共享";
 "Resolving Remote Mac" = "正在解析远端 Mac 地址";

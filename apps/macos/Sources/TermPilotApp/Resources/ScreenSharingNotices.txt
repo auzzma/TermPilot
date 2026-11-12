@@ -18,8 +18,9 @@ Contents/Resources/LICENSE-ISHARESCREEN.txt
 Contents/Resources/NOTICE.md
 Contents/Resources/Licenses/dependencies.json
 
-Choose “Screen Sharing Source and Licenses” in About TermPilot to locate
-corresponding source, build instructions, dependency notices, and licenses.
+In Finder, Control-click TermPilot.app and choose “Show Package Contents”.
+Open Contents/Resources to locate corresponding source, build instructions,
+dependency notices, and licenses.
 Redistributors must preserve the applicable licenses and source obligations.
 
 High-performance scope: macOS, local network, one 1920 × 1080 SDR virtual
