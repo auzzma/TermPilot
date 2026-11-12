@@ -186,18 +186,6 @@ struct AboutSettings: View {
           tr("版本"),
           value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
       }
-      Section {
-        NavigationLink(tr("开源许可")) {
-          ScrollView {
-            Text(
-              (Bundle.main.url(forResource: "OpenSourceNotices", withExtension: "txt").flatMap {
-                try? String(contentsOf: $0, encoding: .utf8)
-              }) ?? tr("请参阅分发包中的 Licenses")
-            )
-            .font(.caption).textSelection(.enabled).padding()
-          }.navigationTitle(tr("开源许可"))
-        }
-      }
     }.listStyle(.insetGrouped).navigationTitle(tr("关于 TermPilot")).navigationBarTitleDisplayMode(
       .inline)
   }

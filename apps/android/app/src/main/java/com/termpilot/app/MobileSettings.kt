@@ -63,7 +63,7 @@ import androidx.compose.ui.semantics.Role
                         GroupedSection("输入"){SettingRow("快捷键栏",onClick={open("keybar")})}
                         GroupedSection("保存的配置"){listOf("groups" to "主机分组","scripts" to "脚本","notes" to "笔记","forwards" to "端口转发").forEachIndexed{index,(key,label)->if(index>0)GroupDivider();SettingRow(label,onClick={open(key)})}}
                     }
-                    "about"->{GroupedSection{SettingRow("应用名称",value="TermPilot");GroupDivider();SettingRow("版本",value="0.2.0")};GroupedSection{SettingRow("开源许可",onClick={open("licenses")})}}
+                    "about"->GroupedSection{SettingRow("应用名称",value="TermPilot");GroupDivider();SettingRow("版本",value="0.2.0")}
                 }
             }
         }

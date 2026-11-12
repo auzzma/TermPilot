@@ -58,7 +58,6 @@ class MainActivity:ComponentActivity(){
     DisposableEffect(lifecycle,model){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->when(event){androidx.lifecycle.Lifecycle.Event.ON_START->model.foreground(true);androidx.lifecycle.Lifecycle.Event.ON_STOP->model.foreground(false);else->{}}};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     LaunchedEffect(model.selected){model.foreground(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))}
     var keyPreferences by remember{mutableStateOf(false)}
-    var licenses by remember{mutableStateOf(false)}
     var globalAI by remember{mutableStateOf<Session?>(null)}
     var backup by remember{mutableStateOf(false)}
     var transfers by remember{mutableStateOf(false)}
@@ -67,7 +66,7 @@ class MainActivity:ComponentActivity(){
     var edit by remember{mutableStateOf<Pair<String,JSONObject>?>(null)}
     fun openSettings(collection:String){when(collection){
         "sync"->syncSettings=true
-        "ai"->model.launch{globalAI=model.openAISettings()};"keybar"->keyPreferences=true;"licenses"->licenses=true
+        "ai"->model.launch{globalAI=model.openAISettings()};"keybar"->keyPreferences=true
         "backup"->backup=true;"transfers"->transfers=true;else->management=collection
     }}
     BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding().imePadding()){
@@ -92,7 +91,6 @@ class MainActivity:ComponentActivity(){
     if(keyPreferences)KeyPreferencesDialog(model){keyPreferences=false}
     if(transfers)TransferHistoryDialog(model){transfers=false}
     globalAI?.let{AISettingsDialog(model,it){globalAI=null}}
-    if(licenses){val context=androidx.compose.ui.platform.LocalContext.current;val text=remember{context.assets.open("OpenSourceNotices.txt").bufferedReader().use{it.readText()}};FormPage(onDismissRequest={licenses=false},title={Text(tr("开源许可"))},text={androidx.compose.foundation.text.selection.SelectionContainer{Text(text,Modifier.verticalScroll(rememberScrollState()),style=MaterialTheme.typography.bodySmall)}},confirmButton={TextButton(onClick={licenses=false}){Text(tr("完成"))}})}
     if(backup)BackupDialog(model){backup=false}
     if(syncSettings)DataSyncSettings(model){syncSettings=false}
     if(management.isNotEmpty())RecordListDialog(model,management,{management=""}){record->edit=management to record}
