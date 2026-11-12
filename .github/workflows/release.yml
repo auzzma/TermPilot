@@ -51,9 +51,14 @@ jobs:
         with:
           name: TermPilot-release-${{ needs.packages.outputs.version }}
           path: dist/release
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
-          name: TermPilot-Android
+          pattern: TermPilot-*-Android-*.apk
+          merge-multiple: true
+          path: dist/mobile/android
+      - uses: actions/download-artifact@v8
+        with:
+          name: TermPilot-Android-support
           path: dist/mobile/android
       - uses: actions/download-artifact@v7
         with:
@@ -67,8 +72,9 @@ jobs:
         shell: bash
         run: |
           files=(dist/release/*.zip dist/release/SHA256SUMS.txt
-                 dist/mobile/android/TermPilot-*-android.zip
-                 dist/mobile/android/TermPilot-*-android.zip.sha256
+                 dist/mobile/android/TermPilot-*-Android-*.apk
+                 dist/mobile/android/TermPilot-*-android-support.zip
+                 dist/mobile/android/TermPilot-*-android-support.zip.sha256
                  dist/mobile/ios/TermPilot-*-ios-ipados.zip
                  dist/mobile/ios/TermPilot-*-ios-ipados.zip.sha256)
           for file in "${files[@]}"; do test -s "$file"; done

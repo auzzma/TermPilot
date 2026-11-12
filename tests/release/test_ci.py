@@ -17,6 +17,25 @@ spec.loader.exec_module(sign_ios)
 spec = importlib.util.spec_from_file_location('simulators', ROOT/'scripts/mobile/select-ios-simulators.py')
 simulators = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(simulators)
+spec = importlib.util.spec_from_file_location('android_install', ROOT/'scripts/mobile/check-android-install.py')
+android_install = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(android_install)
+
+
+class AndroidInstallTargetTests(unittest.TestCase):
+    def test_physical_and_offline_devices_cannot_be_reset(self):
+        devices = 'List of devices attached\nfixture-phone\tdevice\nemulator-5554\toffline\n'
+        with self.assertRaisesRegex(ValueError, 'running Android emulator'):
+            android_install.select_emulator(devices, 'fixture-phone')
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            android_install.select_emulator(devices)
+
+    def test_ambiguous_emulators_require_explicit_selection(self):
+        devices = 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n'
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            android_install.select_emulator(devices)
+        self.assertEqual(android_install.select_emulator(devices, 'emulator-5556'), 'emulator-5556')
+        self.assertEqual(android_install.select_emulator('List of devices attached\nemulator-5554\tdevice\n'), 'emulator-5554')
 
 
 class IOSSimulatorSelectionTests(unittest.TestCase):
@@ -145,13 +164,18 @@ class MobileBundleTests(unittest.TestCase):
     def run_bundle(self):
         return subprocess.run([sys.executable, str(self.root/'scripts/mobile/bundle.py'), 'android'], capture_output=True, text=True)
 
-    def test_bundle_keeps_installers_notices_and_verifiable_checksums(self):
+    def test_android_apks_stay_direct_while_support_bundle_keeps_notices_and_checksums(self):
         result = self.run_bundle()
         self.assertEqual(result.returncode, 0, result.stderr)
-        output = self.output/'TermPilot-0.2.0-android.zip'
+        output = self.output/'TermPilot-0.2.0-android-support.zip'
         with zipfile.ZipFile(output) as bundle:
             self.assertIn('TermPilot/Licenses/NOTICE.txt', bundle.namelist())
-            self.assertTrue(all('TermPilot/'+name in bundle.namelist() for name in self.checksums))
+            self.assertFalse(any(name.endswith('.apk') for name in bundle.namelist()))
+            for name, digest in self.checksums.items():
+                self.assertEqual(hashlib.sha256((self.output/name).read_bytes()).hexdigest(), digest)
+                if not name.endswith('.apk'):
+                    self.assertIn('TermPilot/'+name, bundle.namelist())
+                self.assertIn(digest+'  '+name, bundle.read('TermPilot/SHA256SUMS').decode())
         self.assertEqual(output.with_suffix('.zip.sha256').read_text().split()[0], hashlib.sha256(output.read_bytes()).hexdigest())
 
     def test_changed_apk_and_unexpected_files_are_rejected(self):
@@ -171,7 +195,7 @@ class MobileBundleTests(unittest.TestCase):
         os.utime(notice, (0, 0))
         result = self.run_bundle()
         self.assertEqual(result.returncode, 0, result.stderr)
-        with zipfile.ZipFile(self.output/'TermPilot-0.2.0-android.zip') as bundle:
+        with zipfile.ZipFile(self.output/'TermPilot-0.2.0-android-support.zip') as bundle:
             name = 'TermPilot/Licenses/NOTICE.txt'
             self.assertEqual(bundle.read(name), original)
             self.assertEqual(bundle.getinfo(name).date_time, (1980, 1, 1, 0, 0, 0))

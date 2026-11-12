@@ -74,20 +74,6 @@ jobs:
           bash scripts/mobile/build-android.sh aarch64-linux-android
           bash scripts/mobile/build-android.sh x86_64-linux-android
           bash apps/android/gradlew --no-daemon -p apps/android assembleDebugAndroidTest testDebugUnitTest
-      - name: Enable emulator KVM access
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Emulator native/UI tests (live tests skip without private fixtures)
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 36
-          arch: x86_64
-          target: google_apis
-          disable-animations: true
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none
-          script: bash apps/android/gradlew --no-daemon -p apps/android connectedDebugAndroidTest
       - name: Prepare optional persistent Android signing key
         if: inputs.android_signed
         env:
@@ -107,12 +93,46 @@ jobs:
       - name: Remove temporary Android signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/termpilot-android-signing.jks"
-      - uses: actions/upload-artifact@v6
+      - name: Enable emulator KVM access
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Emulator native/UI and packaged APK installation tests
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          # UI instrumentation uses the debug key; the distributable is already signed.
+          TERMPILOT_ANDROID_SIGN: '0'
         with:
-          name: TermPilot-Android
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front none
+          script: |
+            bash apps/android/gradlew --no-daemon -p apps/android connectedDebugAndroidTest
+            python3 scripts/mobile/check-android-install.py dist/mobile/android/TermPilot-*-Android-x86_64-*.apk --reset-test-app
+      - name: Upload installable ARM64 APK
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/mobile/android/TermPilot-*-Android-arm64-v8a-*.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload x86_64 APK for emulators
+        uses: actions/upload-artifact@v7
+        with:
+          path: dist/mobile/android/TermPilot-*-Android-x86_64-*.apk
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload Android source and notices
+        uses: actions/upload-artifact@v7
+        with:
+          name: TermPilot-Android-support
           path: |
-            dist/mobile/android/TermPilot-*-android.zip
-            dist/mobile/android/TermPilot-*-android.zip.sha256
+            dist/mobile/android/TermPilot-*-android-support.zip
+            dist/mobile/android/TermPilot-*-android-support.zip.sha256
           if-no-files-found: error
           compression-level: 0
           retention-days: 14

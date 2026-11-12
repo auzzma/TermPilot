@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect mobile installers, checksums, source and licenses in a release ZIP."""
+"""Bundle Apple installers or Android supporting files; Android APKs stay separate."""
 from pathlib import Path
 import hashlib
 import subprocess
@@ -12,7 +12,7 @@ if platform not in ('android', 'ios'):
     raise SystemExit('bundle.py android|ios')
 version = subprocess.check_output([sys.executable, str(root/'scripts/release.py'), 'version'], text=True).strip()
 folder = root/'dist/mobile'/platform
-label = 'ios-ipados' if platform == 'ios' else 'android'
+label = 'ios-ipados' if platform == 'ios' else 'android-support'
 output = folder/f'TermPilot-{version}-{label}.zip'
 required = ['LICENSE', 'NOTICE.md', 'INSTALL.txt', 'SHA256SUMS', f'TermPilot-{version}-CorrespondingSource.tar.gz']
 allowed = set(required)
@@ -47,6 +47,8 @@ if not (set(required) - {'SHA256SUMS'}) <= checksums.keys():
 # Clamp ZIP metadata only; preserve the original notice bytes and source files.
 with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
     for name in sorted(checksums.keys() | {'SHA256SUMS'}):
+        if platform == 'android' and name.endswith('.apk'):
+            continue
         archive.write(folder/name, f'TermPilot/{name}')
     for path in sorted((folder/'Licenses').rglob('*')):
         if path.is_file():
