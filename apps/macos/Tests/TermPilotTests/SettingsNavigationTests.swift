@@ -73,7 +73,7 @@ final class SettingsNavigationTests: XCTestCase {
     }
 
     @MainActor
-    func testClickingAnOpenSettingsTabAfterTerminalInputRetainsTheBatchEditor() throws {
+    func testClickingAnOpenSettingsTabAfterTerminalInputRetainsTheBatchEditor() async throws {
         let state = AppState()
         state.preparePerformanceFixtureForTesting(count: 3)
         // Exercise real input responders and PTYs without connecting to a remote host.
@@ -95,7 +95,11 @@ final class SettingsNavigationTests: XCTestCase {
         window.contentView = host
         defer { window.contentView = nil; window.close() }
         window.makeKeyAndOrderFront(nil)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        guard try await waitForUI("Initial batch editor", condition: {
+            descendants(host).contains {
+                ($0 as? NSTextView)?.string == script && $0.window === window && $0.bounds.width > 0
+            }
+        }) else { return }
         let views = descendants(host)
         let editor = try XCTUnwrap(views.compactMap { $0 as? NSTextView }.first { $0.string == script })
         let tabBar = try XCTUnwrap(views.compactMap { $0 as? NSScrollView }.first {
@@ -117,14 +121,16 @@ final class SettingsNavigationTests: XCTestCase {
             XCTAssertTrue(window.firstResponder === editor)
             let workspaceIndex = iteration % 2
             try click(NSPoint(x: tabStart + 220 + CGFloat(workspaceIndex) * 176, y: bar.midY), in: host, window: window)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.08))
-            if iteration == 0 { try saveSnapshot(host, name: "tab-return-workspace") }
-            XCTAssertEqual(state.activeWorkspaceID, state.workspaces[workspaceIndex].id)
-            XCTAssertFalse(editor.isEditable)
-            let session = try XCTUnwrap(state.activeWorkspace?.focusedSessionID)
+            let workspace = state.workspaces[workspaceIndex]
+            let session = try XCTUnwrap(workspace.focusedSessionID)
             let runtime = try XCTUnwrap(state.runtimes[session])
-            XCTAssertEqual(runtime.lifecycle, .connected)
             let terminal = runtime.view()
+            guard try await waitForUI("Workspace active, iteration \(iteration)", condition: {
+                state.activeWorkspaceID == workspace.id && !editor.isEditable
+                    && terminal.window === window && !terminal.isHiddenOrHasHiddenAncestor
+                    && runtime.lifecycle == .connected
+            }) else { return }
+            if iteration == 0 { try saveSnapshot(host, name: "tab-return-workspace") }
             XCTAssertTrue(terminal.window === window)
             XCTAssertFalse(terminal.isHiddenOrHasHiddenAncestor)
             XCTAssertTrue(window.makeFirstResponder(terminal))
@@ -132,7 +138,11 @@ final class SettingsNavigationTests: XCTestCase {
             terminal.insertText("abc", replacementRange: NSRange(location: NSNotFound, length: 0))
 
             try click(NSPoint(x: tabStart + 50, y: bar.midY), in: host, window: window)
-            RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+            guard try await waitForUI("Settings active, iteration \(iteration)", condition: {
+                window.firstResponder !== terminal
+                    && (terminal.window == nil || terminal.isHiddenOrHasHiddenAncestor)
+                    && editor.window === window && editor.isEditable
+            }) else { return }
             XCTAssertFalse(window.firstResponder === terminal)
             XCTAssertTrue(terminal.window == nil || terminal.isHiddenOrHasHiddenAncestor)
             XCTAssertTrue(editor.window === window && editor.isEditable)
@@ -141,6 +151,21 @@ final class SettingsNavigationTests: XCTestCase {
             XCTAssertEqual(controller.job.script.body, script)
             if iteration == 0 { try saveSnapshot(host, name: "tab-return-settings") }
         }
+    }
+
+    @MainActor
+    private func waitForUI(_ message: String, condition: () -> Bool,
+                           file: StaticString = #filePath, line: UInt = #line) async throws -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        repeat {
+            // Spinning RunLoop inside a synchronous XCTest main-actor call does
+            // not reliably drain DispatchQueue.main. Yield so both SwiftUI and
+            // the editor's deferred input-context updates can actually finish.
+            try await Task.sleep(for: .milliseconds(20))
+            if condition() { return true }
+        } while ContinuousClock.now < deadline
+        XCTFail("Timed out waiting for \(message)", file: file, line: line)
+        return false
     }
 
     @MainActor
