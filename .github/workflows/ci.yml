@@ -18,3 +18,11 @@ jobs:
     uses: ./.github/workflows/build-packages.yml
   mobile:
     uses: ./.github/workflows/mobile.yml
+    with:
+      # Pull requests build test APKs without access to the release private key.
+      android_signed: ${{ github.event_name != 'pull_request' }}
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+      ANDROID_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_ALIAS || '' }}
+      ANDROID_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.ANDROID_KEY_PASSWORD || '' }}
