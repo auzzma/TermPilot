@@ -17,9 +17,9 @@ final class BatchJobsTests: XCTestCase {
         editor.delegate = coordinator
 
         model = "first import"
-        coordinator.syncAfterLayout(editor)
+        coordinator.syncAfterLayout(editor, isEditable: true)
         model = "新脚本"
-        coordinator.syncAfterLayout(editor)
+        coordinator.syncAfterLayout(editor, isEditable: true)
         XCTAssertEqual(editor.string, "abc")
         await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
         XCTAssertEqual(editor.string, "新脚本")
@@ -27,7 +27,7 @@ final class BatchJobsTests: XCTestCase {
 
         editor.setMarkedText("ni", selectedRange: NSRange(location: 2, length: 0), replacementRange: editor.selectedRange())
         XCTAssertTrue(editor.hasMarkedText())
-        coordinator.syncAfterLayout(editor)
+        coordinator.syncAfterLayout(editor, isEditable: true)
         await withCheckedContinuation { done in DispatchQueue.main.async { done.resume() } }
         XCTAssertTrue(editor.hasMarkedText())
         XCTAssertTrue(editor.string.contains("ni"))

@@ -1,0 +1,59 @@
+name: Update macOS release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: macOS bundle build number (increase for each update)
+        type: string
+        required: true
+        default: '23'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  packages:
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      macos_only: true
+      macos_build_number: ${{ inputs.build_number }}
+
+  publish:
+    name: Replace macOS archive and checksum
+    needs: packages
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: TermPilot-package-macos-arm64
+          path: dist/release
+      - name: Replace only validated macOS release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: python scripts/ci/replace-macos-release.py
+      - name: Retain previous release files for recovery
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Previous-macOS-release-${{ github.ref_name }}
+          path: dist/release-backup/*
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 30

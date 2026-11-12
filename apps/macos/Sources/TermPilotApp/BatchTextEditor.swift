@@ -34,9 +34,8 @@ struct BatchTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let editor = scroll.documentView as? NSTextView else { return }
         context.coordinator.text = $text
-        if editor.isEditable != context.environment.isEnabled { editor.isEditable = context.environment.isEnabled }
         editor.setAccessibilityLabel(label)
-        context.coordinator.syncAfterLayout(editor)
+        context.coordinator.syncAfterLayout(editor, isEditable: context.environment.isEnabled)
     }
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
@@ -45,18 +44,43 @@ struct BatchTextEditor: NSViewRepresentable {
 
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
+        private var requestedIsEditable = true
         private var syncPending = false
         private var applyingModel = false
 
         init(text: Binding<String>) { self.text = text }
 
-        func syncAfterLayout(_ editor: NSTextView) {
-            guard !syncPending, !editor.hasMarkedText(), editor.string != text.wrappedValue else { return }
+        func syncAfterLayout(_ editor: NSTextView, isEditable: Bool) {
+            requestedIsEditable = isEditable
+            scheduleSync(editor)
+        }
+
+        private func scheduleSync(_ editor: NSTextView) {
+            guard editor.delegate === self, !syncPending,
+                  editor.isEditable != requestedIsEditable
+                    || (!editor.hasMarkedText() && editor.string != text.wrappedValue) else { return }
             syncPending = true
             DispatchQueue.main.async { [weak self, weak editor] in
                 guard let self else { return }
-                syncPending = false
-                guard let editor, editor.delegate === self, !editor.hasMarkedText() else { return }
+                // Keep this set while AppKit talks to the input method: its nested
+                // run loop can deliver another SwiftUI update before we return.
+                defer {
+                    syncPending = false
+                    if let editor { scheduleSync(editor) }
+                }
+                guard let editor, editor.delegate === self else { return }
+                // setEditable also activates/deactivates the input context. Doing
+                // this inside updateNSView can re-enter an AttributeGraph update.
+                let wasComposing = editor.hasMarkedText()
+                if editor.isEditable != requestedIsEditable {
+                    editor.isEditable = requestedIsEditable
+                }
+                guard editor.delegate === self, !editor.hasMarkedText() else { return }
+                // Disabling can finish composition without textDidChange. Keep
+                // that final edit instead of restoring the pre-composition model.
+                if wasComposing, text.wrappedValue != editor.string {
+                    text.wrappedValue = editor.string
+                }
                 let value = text.wrappedValue
                 guard editor.string != value else { return }
                 applyingModel = true

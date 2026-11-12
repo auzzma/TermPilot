@@ -2,6 +2,15 @@ name: Desktop packages (macOS and Windows)
 
 on:
   workflow_call:
+    inputs:
+      macos_only:
+        description: Build only macOS arm64 for an existing release update
+        type: boolean
+        default: false
+      macos_build_number:
+        description: Optional macOS bundle build number
+        type: string
+        default: ''
     outputs:
       version:
         description: Validated application version
@@ -46,19 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: macos
-            arch: arm64
-            runner: xcode-27
-            rust-host: aarch64-apple-darwin
-          - platform: windows
-            arch: x64
-            runner: windows-2022
-            rust-host: x86_64-pc-windows-msvc
-          - platform: windows
-            arch: arm64
-            runner: windows-11-arm
-            rust-host: aarch64-pc-windows-msvc
+        include: ${{ fromJSON(inputs.macos_only && '[{"platform":"macos","arch":"arm64","runner":"xcode-27","rust-host":"aarch64-apple-darwin"}]' || '[{"platform":"macos","arch":"arm64","runner":"xcode-27","rust-host":"aarch64-apple-darwin"},{"platform":"windows","arch":"x64","runner":"windows-2022","rust-host":"x86_64-pc-windows-msvc"},{"platform":"windows","arch":"arm64","runner":"windows-11-arm","rust-host":"aarch64-pc-windows-msvc"}]') }}
     env:
       RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
       RELEASE_ARCH: ${{ matrix.arch }}
@@ -136,7 +133,7 @@ jobs:
         if: matrix.platform == 'macos'
         env:
           TERMPILOT_RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
-          TERMPILOT_BUILD_NUMBER: ${{ github.run_number }}
+          TERMPILOT_BUILD_NUMBER: ${{ inputs.macos_build_number || github.run_number }}
         shell: bash
         run: |
           # Rebuild Release without the Swift test-only DEBUG flag before signing.
@@ -172,6 +169,7 @@ jobs:
 
   collect:
     name: Collect three packages and SHA256 checksums
+    if: ${{ !inputs.macos_only }}
     needs: [metadata, build]
     runs-on: ubuntu-24.04
     steps:

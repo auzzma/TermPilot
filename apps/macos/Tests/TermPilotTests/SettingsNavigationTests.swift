@@ -110,12 +110,17 @@ final class SettingsNavigationTests: XCTestCase {
         try saveSnapshot(host, name: "tab-return-initial")
         let selection = NSRange(location: 5, length: 2)
         editor.setSelectedRange(selection)
-        for iteration in 0..<10 {
+        for iteration in 0..<20 {
+            // Leave the batch editor's input context active when selecting a
+            // workspace: disabling it during SwiftUI layout used to hang here.
+            XCTAssertTrue(window.makeFirstResponder(editor))
+            XCTAssertTrue(window.firstResponder === editor)
             let workspaceIndex = iteration % 2
             try click(NSPoint(x: tabStart + 220 + CGFloat(workspaceIndex) * 176, y: bar.midY), in: host, window: window)
             RunLoop.current.run(until: Date().addingTimeInterval(0.08))
             if iteration == 0 { try saveSnapshot(host, name: "tab-return-workspace") }
             XCTAssertEqual(state.activeWorkspaceID, state.workspaces[workspaceIndex].id)
+            XCTAssertFalse(editor.isEditable)
             let session = try XCTUnwrap(state.activeWorkspace?.focusedSessionID)
             let runtime = try XCTUnwrap(state.runtimes[session])
             XCTAssertEqual(runtime.lifecycle, .connected)
