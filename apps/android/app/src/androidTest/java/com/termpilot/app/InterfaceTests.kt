@@ -19,6 +19,19 @@ class InterfaceTests {
     }
     private fun settings(){compose.onNodeWithTag("home-settings").performClick()}
     private fun back(){compose.onAllNodes(hasContentDescription("返回") or hasContentDescription("取消")).onLast().performClick()}
+    @Test fun aboutLicenseOpensAndClosesAsModal(){
+        settings();compose.onNodeWithText("关于 TermPilot").performScrollTo().performClick()
+        repeat(2){iteration->
+            compose.onNodeWithText("GNU General Public License v3.0").performScrollTo().performClick()
+            compose.onNodeWithTag("gpl-license-text").assertTextContains("Version 3, 29 June 2007",substring=true)
+                .assertTextContains("END OF TERMS AND CONDITIONS",substring=true)
+                .assertTextContains("https://www.gnu.org/licenses/why-not-lgpl.html",substring=true)
+            if(iteration==0)screenshot("about-gpl-license")
+            compose.onNodeWithTag("close-gpl-license").performClick()
+            compose.onNodeWithTag("gpl-license-text").assertDoesNotExist()
+            compose.onNodeWithText("应用名称").assertExists()
+        }
+    }
     @Test fun dataSyncProviderForm(){
         settings();compose.onNodeWithText("数据同步").performScrollTo().performClick()
         compose.waitUntil(15000){compose.onAllNodesWithText("添加云服务").fetchSemanticsNodes().isNotEmpty()}

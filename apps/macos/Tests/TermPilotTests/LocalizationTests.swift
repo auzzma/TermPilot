@@ -3,6 +3,17 @@ import Foundation
 import XCTest
 
 final class LocalizationTests: XCTestCase {
+    func testAboutLicenseLoadsCompleteOfflineTextAndLocalizedLabels() throws {
+        let url = try XCTUnwrap(AppResourceLocator.url(forResource: "GPL-3.0", withExtension: "txt"))
+        XCTAssertEqual(GPLLicense.text, try String(contentsOf: url, encoding: .utf8))
+        XCTAssertTrue(GPLLicense.text.contains("GNU GENERAL PUBLIC LICENSE"))
+        XCTAssertTrue(GPLLicense.text.contains("Version 3, 29 June 2007"))
+        XCTAssertTrue(GPLLicense.text.contains("END OF TERMS AND CONDITIONS"))
+        XCTAssertTrue(GPLLicense.text.contains("https://www.gnu.org/licenses/why-not-lgpl.html"))
+        XCTAssertEqual(localized("Open-source license", in: AppResourceLocator.localizedBundle(for: "zh-Hans")), "开源许可")
+        XCTAssertEqual(localized("Open-source license", in: AppResourceLocator.localizedBundle(for: "en")), "Open-source license")
+    }
+
     func testTopTabQuickSwitcherUsesApplicationLanguageBundles() {
         let chinese = AppResourceLocator.localizedBundle(
             for: "zh-Hans"

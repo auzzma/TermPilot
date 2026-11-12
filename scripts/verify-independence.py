@@ -8,6 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 SKIP = {'.git', 'target', 'Vendor', 'node_modules', 'bin', 'obj', 'dist',
         '.runtime-cache', '.release-staging', '.swiftpm', '__pycache__', '.tools', '.derived', '.gradle', '.generated', 'build'}
 errors = []
+license_text = (ROOT / 'LICENSE').read_bytes()
+for directory in ('apps/macos/Sources/TermPilotApp/Resources',
+                  'apps/ios/Resources', 'apps/android/app/src/main/assets'):
+    path = ROOT / directory / 'GPL-3.0.txt'
+    if not path.is_file() or path.read_bytes() != license_text:
+        errors.append(f'License resource is missing or outdated: {path.relative_to(ROOT)}; run scripts/sync-resources.py')
 count = 0
 source_suffixes = {'.rs', '.swift', '.cs', '.csproj', '.toml', '.sh', '.ps1', '.py', '.cjs', '.json', '.yml', '.ts', '.tsx', '.js', '.css'}
 for directory, dirs, files in os.walk(ROOT):

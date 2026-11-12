@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import zipfile
 
@@ -20,6 +21,60 @@ spec.loader.exec_module(simulators)
 spec = importlib.util.spec_from_file_location('android_install', ROOT/'scripts/mobile/check-android-install.py')
 android_install = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(android_install)
+
+
+@unittest.skipUnless(os.name == 'posix', 'The release publisher runs on Linux')
+class ReleasePublicationTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        for name in (
+            'release/TermPilot-0.2.0-macos-arm64.zip', 'release/SHA256SUMS.txt',
+            'mobile/android/TermPilot-0.2.0-Android-arm64-v8a-test.apk',
+            'mobile/android/TermPilot-0.2.0-Android-x86_64-test.apk',
+            'mobile/android/TermPilot-0.2.0-android-support.zip',
+            'mobile/android/TermPilot-0.2.0-android-support.zip.sha256',
+            'mobile/ios/TermPilot-0.2.0-ios-ipados.zip',
+            'mobile/ios/TermPilot-0.2.0-ios-ipados.zip.sha256',
+        ):
+            path = self.root/'dist'/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'validated fixture')
+        workflow = (ROOT/'.github/workflows/release.yml').read_text(encoding='utf-8')
+        self.script = textwrap.dedent(workflow.split('      - name: Publish validated packages\n', 1)[1]
+                                     .split('        run: |\n', 1)[1])
+        executable = self.root/'gh'
+        executable.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$CALL_LOG"\n'
+                              'if [[ "$2" == view ]]; then exit "${VIEW_EXIT:-1}"; fi\n'
+                              'if [[ "$2" == upload ]]; then exit "${UPLOAD_EXIT:-0}"; fi\n')
+        executable.chmod(0o755)
+        self.log = self.root/'calls'
+        self.env = dict(os.environ, PATH=str(self.root)+os.pathsep+os.environ['PATH'],
+                        CALL_LOG=str(self.log), RELEASE_TAG='v0.2.0', RELEASE_COMMIT='1234567'+'0'*33)
+
+    def run_publish(self, **env):
+        return subprocess.run(['bash', '-euo', 'pipefail', '-c', self.script], cwd=self.root,
+                              env=dict(self.env, **env), capture_output=True, text=True)
+
+    def test_new_release_is_published_after_upload_with_commit_title_and_direct_apks(self):
+        result = self.run_publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text().splitlines()
+        self.assertEqual([line.split()[1] for line in calls], ['view', 'create', 'edit'])
+        self.assertIn('--draft --title v0.2.0-1234567', calls[1])
+        for arch in ('arm64-v8a', 'x86_64'):
+            self.assertIn(f'TermPilot-0.2.0-Android-{arch}-test.apk', calls[1])
+        self.assertIn('--title v0.2.0-1234567 --draft=false', calls[2])
+
+    def test_missing_android_architecture_prevents_publication(self):
+        next(self.root.glob('dist/mobile/android/*x86_64*.apk')).unlink()
+        self.assertNotEqual(self.run_publish().returncode, 0)
+        self.assertFalse(self.log.exists())
+
+    def test_failed_upload_does_not_publish_an_existing_draft(self):
+        self.assertNotEqual(self.run_publish(VIEW_EXIT='0', UPLOAD_EXIT='1').returncode, 0)
+        self.assertEqual([line.split()[1] for line in self.log.read_text().splitlines()], ['view', 'upload'])
 
 
 class AndroidInstallTargetTests(unittest.TestCase):

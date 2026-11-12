@@ -19,6 +19,7 @@ import androidx.compose.ui.semantics.Role
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun SettingsPanel(model:AppModel,open:(String)->Unit){
     var page by remember { mutableStateOf("") }
+    var showsLicense by remember { mutableStateOf(false) }
     fun back(){page=if(page=="videoCodec") "terminal" else if(page in listOf("appearance","language","terminal","fps","videoCodec"))"general" else ""}
     BackHandler(page.isNotEmpty()){back()}
     BoxWithConstraints(Modifier.fillMaxSize()){
@@ -63,13 +64,32 @@ import androidx.compose.ui.semantics.Role
                         GroupedSection("输入"){SettingRow("快捷键栏",onClick={open("keybar")})}
                         GroupedSection("保存的配置"){listOf("groups" to "主机分组","scripts" to "脚本","notes" to "笔记","forwards" to "端口转发").forEachIndexed{index,(key,label)->if(index>0)GroupDivider();SettingRow(label,onClick={open(key)})}}
                     }
-                    "about"->GroupedSection{SettingRow("应用名称",value="TermPilot");GroupDivider();SettingRow("版本",value="0.2.0")}
+                    "about"->{
+                        GroupedSection{SettingRow("应用名称",value="TermPilot");GroupDivider();SettingRow("版本",value="0.2.0")}
+                        GroupedSection("开源许可"){SettingRow("GNU General Public License v3.0",onClick={showsLicense=true})}
+                    }
                 }
             }
         }
     }
     }
     }
+    if(showsLicense)GPLLicenseDialog{showsLicense=false}
+}
+
+@Composable private fun GPLLicenseDialog(close:()->Unit){
+    val context=androidx.compose.ui.platform.LocalContext.current
+    val maxHeight=androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.6f
+    val text=remember(context){runCatching{context.assets.open("GPL-3.0.txt").bufferedReader(Charsets.UTF_8).use{it.readText()}}.getOrNull()}
+    AlertDialog(
+        onDismissRequest=close,
+        title={Text("GNU General Public License v3.0")},
+        text={androidx.compose.foundation.text.selection.SelectionContainer{
+            Text(text?:tr("无法加载许可文本。"),Modifier.heightIn(max=maxHeight).verticalScroll(rememberScrollState()).testTag("gpl-license-text"),
+                style=MaterialTheme.typography.bodySmall,fontFamily=FontFamily.Monospace)
+        }},
+        confirmButton={TextButton(onClick=close,modifier=Modifier.testTag("close-gpl-license")){Text(tr("完成"))}}
+    )
 }
 
 @Composable private fun ColumnScope.SettingsHomeGroups(model:AppModel,open:(String)->Unit,select:(String)->Unit){

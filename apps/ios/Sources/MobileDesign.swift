@@ -67,7 +67,7 @@ struct SettingsHome: View {
           AboutSettings()
         } label: {
           SettingsLabel(title: "关于 TermPilot", icon: "info.circle")
-        }
+        }.accessibilityIdentifier("settings-about")
       }
       Section {
         Text(
@@ -178,6 +178,7 @@ struct ToolSettings: View {
 }
 
 struct AboutSettings: View {
+  @State private var showsLicense = false
   var body: some View {
     List {
       Section {
@@ -186,7 +187,38 @@ struct AboutSettings: View {
           tr("版本"),
           value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "")
       }
+      Section(tr("开源许可")) {
+        Button("GNU General Public License v3.0") { showsLicense = true }
+          .accessibilityIdentifier("open-gpl-license")
+      }
     }.listStyle(.insetGrouped).navigationTitle(tr("关于 TermPilot")).navigationBarTitleDisplayMode(
       .inline)
+      .sheet(isPresented: $showsLicense) { GPLLicenseView() }
+  }
+}
+
+private struct GPLLicenseView: View {
+  @Environment(\.dismiss) private var dismiss
+  private let text = Bundle.main.url(forResource: "GPL-3.0", withExtension: "txt")
+    .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+
+  var body: some View {
+    NavigationStack {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+          Text("GNU General Public License v3.0").font(.headline)
+          Text(verbatim: text ?? tr("无法加载许可文本。"))
+            .font(.system(.footnote, design: .monospaced))
+            .textSelection(.enabled)
+            .accessibilityIdentifier("gpl-license-text")
+        }.frame(maxWidth: .infinity, alignment: .leading).padding()
+      }
+      .navigationTitle(tr("开源许可")).navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button(tr("完成")) { dismiss() }.accessibilityIdentifier("close-gpl-license")
+        }
+      }
+    }.presentationDetents([.large])
   }
 }

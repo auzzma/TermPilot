@@ -250,6 +250,7 @@ const zhHans: Record<string, string> = {
   History: "历史记录",
   Settings: "设置",
   About: "关于",
+  "Open-source license": "开源许可",
   "Version {version}": "版本 {version}",
   "TermPilot contributors.": "TermPilot 贡献者。",
   Backup: "备份",

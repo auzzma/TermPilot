@@ -4,6 +4,10 @@ from pathlib import Path
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
+# All clients display the unmodified repository license offline.
+for directory in ('apps/macos/Sources/TermPilotApp/Resources',
+                  'apps/ios/Resources', 'apps/android/app/src/main/assets'):
+    shutil.copyfile(ROOT / 'LICENSE', ROOT / directory / 'GPL-3.0.txt')
 MAC = ROOT / 'apps/macos'
 resources = MAC / 'Sources/TermPilotApp/Resources'
 for name in ('ssh2-bridge', 'sftp-bridge', 'proxy-bridge', 'keygen'):

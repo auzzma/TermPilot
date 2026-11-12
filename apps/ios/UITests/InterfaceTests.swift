@@ -109,6 +109,28 @@ final class InterfaceTests: XCTestCase {
     XCTAssertTrue(app.staticTexts["Esc"].exists)
     attach("shortcuts", app)
   }
+  func testAboutLicenseOpensAndClosesAsModal() {
+    let app = launchChineseApp()
+    let about = app.buttons["settings-about"]
+    for _ in 0..<5 { if about.isHittable { break }; app.swipeUp() }
+    XCTAssertTrue(about.waitForExistence(timeout: 5))
+    about.tap()
+    let open = app.buttons["open-gpl-license"]
+    XCTAssertTrue(open.waitForExistence(timeout: 5))
+    for iteration in 0..<2 {
+      open.tap()
+      let text = app.staticTexts["gpl-license-text"]
+      XCTAssertTrue(text.waitForExistence(timeout: 5))
+      XCTAssertTrue(text.label.contains("Version 3, 29 June 2007"))
+      XCTAssertTrue(text.label.contains("END OF TERMS AND CONDITIONS"))
+      XCTAssertTrue(text.label.contains("https://www.gnu.org/licenses/why-not-lgpl.html"))
+      if iteration == 0 { attach("about-gpl-license", app) }
+      app.buttons["close-gpl-license"].tap()
+      let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: text)
+      XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+      XCTAssertTrue(open.exists)
+    }
+  }
   func testQuickConnectProtocolsAndHome() {
     let app = launchChineseApp()
     app.buttons["主机"].firstMatch.tap()

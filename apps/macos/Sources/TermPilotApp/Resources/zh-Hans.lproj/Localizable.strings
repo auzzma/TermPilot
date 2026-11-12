@@ -119,6 +119,8 @@
 "General" = "通用";
 "About" = "关于";
 "About TermPilot" = "关于 TermPilot";
+"Open-source license" = "开源许可";
+"Unable to load the license text." = "无法加载许可文本。";
 "Version %@ (%@)" = "版本 %@ (%@)";
 "Credentials" = "凭证";
 "New Credential" = "新增凭证";

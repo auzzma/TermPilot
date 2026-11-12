@@ -201,6 +201,8 @@
   "导入完成；导入前的备份已保存在本机，可导出保留。": "Import complete. The pre-import backup is saved locally and can be exported.",
   "管理": "Manage",
   "关于": "About",
+  "开源许可": "Open-source license",
+  "无法加载许可文本。": "Unable to load the license text.",
   "AI 设置": "AI settings",
   "AI 提供商": "AI providers",
   "提供商": "Provider",

@@ -119,6 +119,8 @@
 "General" = "General";
 "About" = "About";
 "About TermPilot" = "About TermPilot";
+"Open-source license" = "Open-source license";
+"Unable to load the license text." = "Unable to load the license text.";
 "Version %@ (%@)" = "Version %@ (%@)";
 "Credentials" = "Credentials";
 "New Credential" = "New Credential";

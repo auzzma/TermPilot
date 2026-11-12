@@ -54,6 +54,7 @@ import {
 import { useTranslation } from "../i18n";
 import packageMetadata from "../../package.json";
 import { RevealablePasswordInput } from "./RevealablePasswordInput";
+import { GPLLicenseDialog, gplLicenseTitle } from "./GPLLicenseDialog";
 import {
   batchSelectionState,
   buildHostGroupTree,
@@ -206,6 +207,7 @@ const AboutPanel = memo(AboutPanelView);
 function AboutPanelView() {
   const t = useTranslation();
   const [version, setVersion] = useState(packageMetadata.version);
+  const [showsLicense, setShowsLicense] = useState(false);
 
   useEffect(() => {
     void getVersion().then(setVersion).catch(() => undefined);
@@ -222,7 +224,12 @@ function AboutPanelView() {
         <p className="settings-about-contributors">
           {t("TermPilot contributors.")}
         </p>
+        <div className="settings-about-license">
+          <span>{t("Open-source license")}</span>
+          <button onClick={() => setShowsLicense(true)}>{gplLicenseTitle}</button>
+        </div>
       </div>
+      {showsLicense && <GPLLicenseDialog onClose={() => setShowsLicense(false)} />}
     </section>
   );
 }
