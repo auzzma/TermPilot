@@ -7,7 +7,8 @@ android {
         minSdk = 30
         targetSdk = 36
         providers.gradleProperty("termpilotAbi").orNull?.let { ndk.abiFilters += it }
-        versionCode = 21
+        // Increase for each Android release; versionName remains the public version.
+        versionCode = 22
         versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -26,9 +27,10 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
-    // CI signing is opt-in. No private keystore or password belongs in Git.
+    // Release CI supplies the persistent key; private keys and passwords stay outside Git.
     if (providers.environmentVariable("TERMPILOT_ANDROID_SIGN").orNull == "1") {
         val ciSigning = signingConfigs.create("ciRelease") {
+            storeType = "PKCS12"
             storeFile = file(requireNotNull(System.getenv("ANDROID_KEYSTORE_PATH")))
             storePassword = requireNotNull(System.getenv("ANDROID_KEYSTORE_PASSWORD"))
             keyAlias = requireNotNull(System.getenv("ANDROID_KEY_ALIAS"))

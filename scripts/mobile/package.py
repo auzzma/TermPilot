@@ -4,6 +4,8 @@ from pathlib import Path
 import hashlib, os, shutil, subprocess, sys, tempfile, zipfile
 from audit import audit_android
 ROOT=Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT/'scripts'))
+from android_signing import verify_signed_apk
 platform=sys.argv[1] if len(sys.argv)>1 else ''
 if platform not in ('ios','android'):raise SystemExit('package.py ios|android')
 out=ROOT/'dist/mobile'/platform;out.mkdir(parents=True,exist_ok=True)
@@ -47,6 +49,8 @@ if platform=='android':
   assert "versionName='"+version+"'" in badging,'APK version mismatch'
   subprocess.run([str(zipalign),'-c','-P','16','-v','4',str(dest)],check=True,stdout=subprocess.DEVNULL)
   subprocess.run([str(sdk/'build-tools/36.0.0/apksigner'),'verify',str(dest)],check=True)
+  if android_signed:
+   verify_signed_apk(dest, version, abi, sdk)
   audit_android(dest, abi)
   subprocess.run([sys.executable,str(ROOT/'scripts/audit-privacy.py'),str(dest)],check=True)
  signing_note='Uses the configured persistent Android signing key. Updates require the same key and a non-decreasing versionCode.' if android_signed else 'Uses a local/CI debug key. Fresh CI runs may use different keys and cannot always upgrade an existing installation. Back up data before changing signing identities.'

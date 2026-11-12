@@ -8,7 +8,7 @@ on:
       android_signed:
         description: Sign Android APKs with repository signing secrets
         type: boolean
-        default: false
+        default: true
       ios_signed:
         description: Also create an IPA for provisioned devices
         type: boolean
@@ -28,13 +28,13 @@ jobs:
   mobile:
     uses: ./.github/workflows/mobile.yml
     with:
-      android_signed: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed || false }}
+      android_signed: ${{ github.event_name != 'workflow_dispatch' || inputs.android_signed }}
       ios_signed: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed || false }}
     secrets:
-      ANDROID_KEYSTORE_BASE64: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
-      ANDROID_KEYSTORE_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
-      ANDROID_KEY_ALIAS: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEY_ALIAS || '' }}
-      ANDROID_KEY_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.android_signed && secrets.ANDROID_KEY_PASSWORD || '' }}
+      ANDROID_KEYSTORE_BASE64: ${{ (github.event_name != 'workflow_dispatch' || inputs.android_signed) && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ (github.event_name != 'workflow_dispatch' || inputs.android_signed) && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+      ANDROID_KEY_ALIAS: ${{ (github.event_name != 'workflow_dispatch' || inputs.android_signed) && secrets.ANDROID_KEY_ALIAS || '' }}
+      ANDROID_KEY_PASSWORD: ${{ (github.event_name != 'workflow_dispatch' || inputs.android_signed) && secrets.ANDROID_KEY_PASSWORD || '' }}
       IOS_CERTIFICATE_P12_BASE64: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed && secrets.IOS_CERTIFICATE_P12_BASE64 || '' }}
       IOS_CERTIFICATE_PASSWORD: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed && secrets.IOS_CERTIFICATE_PASSWORD || '' }}
       IOS_PROVISION_PROFILE_BASE64: ${{ github.event_name == 'workflow_dispatch' && inputs.ios_signed && secrets.IOS_PROVISION_PROFILE_BASE64 || '' }}

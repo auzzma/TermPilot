@@ -1,0 +1,71 @@
+name: Update Android release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mobile:
+    if: github.ref_type == 'tag'
+    uses: ./.github/workflows/mobile.yml
+    with:
+      android_only: true
+      android_signed: true
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+  publish:
+    name: Replace signed Android APKs and support files
+    needs: mobile
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager 'build-tools;36.0.0'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: TermPilot-*-Android-*-signed.apk
+          merge-multiple: true
+          path: dist/mobile/android
+      - uses: actions/download-artifact@v8
+        with:
+          name: TermPilot-Android-support
+          path: dist/mobile/android
+      - name: Replace only validated Android release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: python scripts/ci/replace-android-release.py
+      - name: Retain previous Android files for recovery
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Previous-Android-release-${{ github.ref_name }}
+          path: dist/android-release-backup/*
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 30
