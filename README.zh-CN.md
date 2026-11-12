@@ -18,3 +18,7 @@ TermPilot 将 SSH 终端、远程桌面和服务器管理集中在一个应用�
 - **界面体验**：简体中文与英文、深浅主题，以及手机和平板布局。
 
 各平台的功能范围有所不同，Windows 与 Android 的 Apple 高性能屏幕共享仍处于预览阶段。
+
+## 交流群
+
+Telegram：[https://t.me/Impart_Chat](https://t.me/Impart_Chat)
