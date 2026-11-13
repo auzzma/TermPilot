@@ -15,8 +15,11 @@ concurrency:
 
 jobs:
   packages:
+    # Explicit release commits are built once by their tag workflow.
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[tag-release]')
     uses: ./.github/workflows/build-packages.yml
   mobile:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[tag-release]')
     uses: ./.github/workflows/mobile.yml
     with:
       # Pull requests build test APKs without access to the release private key.

@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// One SwiftUI settings surface for macOS, iPhone and iPad. Network/storage stay in Rust.
 public struct DataSyncView: View {
@@ -22,6 +23,10 @@ public struct DataSyncView: View {
     @State private var passwordRunning = false
     @State private var passwordStarting = false
     @State private var updateCredentials = false
+    @State private var chooseVersionFile = false
+    @State private var versionFile: URL?
+    @State private var versionKey = ""
+    @State private var showVersionKey = false
     private var passwordProgress: [String: Any] { status["passwordChange"] as? [String: Any] ?? [:] }
     private var passwordActive: Bool { passwordProgress["active"] as? Bool == true }
     private struct Confirmation: Identifiable { let id = UUID(); let title: String; let request: [String: Any] }
@@ -93,16 +98,28 @@ public struct DataSyncView: View {
                     Toggle("自动同步", isOn: Binding(get: { status["auto"] as? Bool == true }, set: { enabled in
                         run(["method":"sync.configure", "confirmed":true, "auto":enabled])
                     })).disabled(status["providerUnavailable"] as? Bool == true)
+                    SyncLeaseSettings(minutes: status["lockTimeoutMinutes"] as? Int ?? 60) { minutes in
+                        run(["method":"sync.configure", "confirmed":true, "lockTimeoutMinutes":minutes])
+                    }
+                    SyncHistorySettings(count: status["historyVersionCount"] as? Int ?? 10, pending: status["pendingHistoryVersionCount"] as? Int) { count in
+                        run(["method":"sync.configure", "confirmed":true, "historyVersionCount":count])
+                    }
                     if let last = status["lastCheck"] as? [String: Any], let at = last["at"] as? String {
                         LabeledContent("上次检查", value: at)
                     }
                     HStack {
                         Button("立即同步") { run(["method":"sync.run"]) }.buttonStyle(.borderedProminent).disabled(status["providerUnavailable"] as? Bool == true)
-                        Button("生成完整快照") { run(["method":"sync.snapshot"]) }
+                        Button("恢复旧锁并同步") { inspectLegacyLock() }.disabled(status["providerUnavailable"] as? Bool == true)
                     }
+                    Button("检查并修复缺失文件") { run(["method":"sync.repair"]) }.disabled(status["providerUnavailable"] as? Bool == true)
+                    if let recovery = status["objectRecovery"] as? [String: Any], let count = recovery["restored"] as? Int {
+                        Text("最近检查恢复了 \(count) 个原始文件").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Button("生成完整快照") { run(["method":"sync.snapshot"]) }
                     Text("后台同步受手机系统限制。未上传的删除恢复内容会留在本机；回收站默认保留 30 天。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                Section("云端历史") { SyncMaintenanceStatus(status: status["maintenance"] as? [String: Any] ?? [:]) }
                 Section("同步 Key") {
                     if status["passwordRequired"] as? Bool == true {
                         Text("云端 Key 已变更。输入当前 Key 后，本机离线修改会继续合并。").foregroundStyle(.orange)
@@ -157,31 +174,12 @@ public struct DataSyncView: View {
                     }
                 }
                 Section("冲突") {
-                    let conflicts = status["conflicts"] as? [[String:Any]] ?? []
-                    if conflicts.isEmpty { Text("没有待处理冲突").foregroundStyle(.secondary) }
-                    ForEach(Array(conflicts.enumerated()),id:\.offset) { _, conflict in
-                        DisclosureGroup(conflict["id"] as? String ?? "记录") {
-                            if conflict["deleted"] as? Bool == true {
-                                Text("删除与编辑并发：原记录保持删除，编辑内容已保留。请从回收站恢复。")
-                                Button("确认保留删除") {confirmation=Confirmation(title:"确认保持删除，并将当前编辑候选归档到回收站。",request:["method":"sync.resolve","scope":conflict["scope"] ?? "configuration","id":conflict["id"] ?? "","keepDeleted":true])}
-
-                            } else {
-                                let values = conflict["fields"] as? [String:[[String:Any]]] ?? [:]
-                                ForEach(values.keys.sorted(), id:\.self) { field in
-                                    if let candidates = values[field], candidates.count > 1 {
-                                        Text(field).font(.headline)
-                                        ForEach(Array(candidates.enumerated()),id:\.offset) { _, candidate in
-                                            Button("保留：\(String(describing: candidate["value"] ?? ""))") {
-                                                run(["method":"sync.resolve","scope":conflict["scope"] ?? "configuration","id":conflict["id"] ?? "","choices":[field:candidate["dot"] ?? [:]]])
-                                            }.lineLimit(3)
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    SyncConflicts(conflicts: status["conflicts"] as? [[String: Any]] ?? [], request: request) { message, command in
+                        confirmation = Confirmation(title: message, request: command)
                     }
                 }
                 Section("快照") {
+                    Button("从 TPS 文件恢复") { chooseVersionFile = true }
                     let snapshots = status["snapshots"] as? [[String:Any]] ?? []
                     if snapshots.isEmpty { Text("尚未生成快照").foregroundStyle(.secondary) }
                     ForEach(Array(snapshots.enumerated()),id:\.offset) { _, snapshot in
@@ -197,6 +195,21 @@ public struct DataSyncView: View {
         .formStyle(.grouped).disabled(busy)
         .safeAreaInset(edge: .bottom, spacing: 0) { SyncOperationProgress(call: request, busy: busy) }
         .task { await load() }
+        .fileImporter(isPresented: $chooseVersionFile, allowedContentTypes: [.data]) { result in
+            do { versionFile = try result.get(); versionKey = ""; showVersionKey = true }
+            catch { self.error = error.localizedDescription }
+        }
+        .sheet(isPresented: $showVersionKey, onDismiss: { versionKey = ""; versionFile = nil }) {
+            Form {
+                Text("从完整版本恢复").font(.headline)
+                Text("输入创建此文件时的同步 Key。无需连接云端；先预览，再恢复已开启同步范围内的数据。")
+                SecureField("文件的同步 Key", text: $versionKey)
+                HStack {
+                    Button("取消") { showVersionKey = false }
+                    Button("校验并预览") { importVersionFile() }.disabled(versionKey.isEmpty)
+                }
+            }.padding().frame(idealWidth: 480, idealHeight: 250)
+        }
         .sheet(item: $inviteEditor) { editor in
             SyncInviteView(profileID: editor.profileID, call: call) { await load(); await changed() }
         }
@@ -246,9 +259,19 @@ public struct DataSyncView: View {
         do { metadata=try await request(["method":"sync.describe"]);status=try await request(["method":"sync.status"]);if passwordActive { showPasswordProgress = true };if configured{if let cloud=status["provider"] as? [String:Any]{provider=providers.contains { $0["id"] as? String == cloud["kind"] as? String } ? (cloud["kind"] as? String ?? "webdav") : "webdav";fields=[:];for (key,value) in cloud{if let text=value as? String{fields[key]=text}}}} }
         catch { self.error=error.localizedDescription }
     }
+    private func inspectLegacyLock() {
+        busy = true; error = nil
+        Task {
+            do {
+                let preview = try await request(["method":"sync.lock.inspect"])
+                confirmation = Confirmation(title: preview["message"] as? String ?? "确认其他设备已停止同步？", request: ["method":"sync.lock.recover", "expectedHead":preview["expectedHead"] ?? "", "confirmed":true, "otherDevicesStopped":true])
+            } catch { self.error = error.localizedDescription }
+            busy = false
+        }
+    }
     private func run(_ command:[String:Any]) {
         busy=true;error=nil
-        Task { do { _=try await request(command); if command["method"] as? String == "sync.profile.use" { _ = try await request(["method":"sync.run"]) } } catch { self.error=error.localizedDescription }; await load(); await changed(); busy=false }
+        Task { do { _=try await request(command); if ["sync.profile.use","sync.snapshot"].contains(command["method"] as? String ?? "") { _ = try await request(["method":"sync.run"]) } } catch { self.error=error.localizedDescription }; await load(); await changed(); busy=false }
     }
     private func beginPasswordChange() {
         let command: [String: Any] = ["method":"sync.password.begin", "oldPassphrase":oldPassword, "newPassphrase":newPassword, "confirmPassphrase":repeatPassword, "confirmed":true, "clientsUpdated":clientsUpdated]
@@ -288,5 +311,19 @@ public struct DataSyncView: View {
             let count=result["copies"] as? Int ?? 0
             confirmation=Confirmation(title:"将恢复 \(count) 条记录为新副本，已有记录保持不变。快照中的偏好和 AI 设置（若已开启同步）将作为新的修改应用。",request:["method":"sync.snapshot.restore","id":id,"actionId":UUID().uuidString,"confirmed":true])
         }catch{self.error=error.localizedDescription};busy=false}
+    }
+    private func importVersionFile() {
+        guard let url = versionFile else { return }
+        let key = versionKey
+        let access = url.startAccessingSecurityScopedResource()
+        showVersionKey = false; versionKey = ""; busy = true; error = nil
+        Task {
+            defer { if access { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let imported = try await request(["method":"sync.snapshot.import", "path":url.path, "passphrase":key])
+                await load(); busy = false
+                previewSnapshot(imported["id"] as? String ?? "")
+            } catch { self.error = error.localizedDescription; busy = false }
+        }
     }
 }

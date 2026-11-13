@@ -17,6 +17,13 @@ spec.loader.exec_module(updater)
 
 class AndroidReleaseUpdateTests(unittest.TestCase):
     def setUp(self):
+        fixture_version = patch.object(updater, 'project_version', return_value='0.2.0')
+        fixture_version.start()
+        self.addCleanup(fixture_version.stop)
+        # Keep the historical release fixture independent of the current app version.
+        source_code = patch.object(updater, 'android_version_code', return_value=22)
+        source_code.start()
+        self.addCleanup(source_code.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)

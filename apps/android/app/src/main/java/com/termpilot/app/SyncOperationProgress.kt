@@ -30,7 +30,8 @@ import org.json.JSONObject
     Surface(color=MaterialTheme.colorScheme.surfaceContainer){
         Column(Modifier.fillMaxWidth().testTag("sync-operation-progress").padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
             Row {Text(label,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall);if(!current.isNull("percent"))Text("${current.optInt("percent")}%")}
-            if(current.isNull("percent"))LinearProgressIndicator(Modifier.fillMaxWidth())
+            if(phase=="failed")Text("同步已停止",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
+            else if(current.isNull("percent"))LinearProgressIndicator(Modifier.fillMaxWidth())
             else LinearProgressIndicator(progress={current.optInt("percent").coerceIn(0,100)/100f},modifier=Modifier.fillMaxWidth())
             if(!current.isNull("total")&&phase!="completed")Text("当前阶段：${current.optInt("completed")} / ${current.optInt("total")}",style=MaterialTheme.typography.bodySmall)
             Text("下载 ${formatSyncBytes(current.optLong("downloadedBytes"))} · 上传 ${formatSyncBytes(current.optLong("uploadedBytes"))} · 已校验 ${formatSyncBytes(current.optLong("verifiedBytes"))}",style=MaterialTheme.typography.bodySmall)

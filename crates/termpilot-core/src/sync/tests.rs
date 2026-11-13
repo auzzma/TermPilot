@@ -2,6 +2,14 @@ use super::*;
 use model::*;
 use serde_json::json;
 use std::collections::BTreeMap;
+pub(super) fn cloud_tree(root: &std::path::Path) -> BTreeMap<std::path::PathBuf, Vec<u8>> {
+    fn walk(root:&std::path::Path, dir:&std::path::Path, out:&mut BTreeMap<std::path::PathBuf,Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).unwrap() { let path=entry.unwrap().path();
+            if path.is_dir() {walk(root,&path,out);} else {out.insert(path.strip_prefix(root).unwrap().to_owned(),std::fs::read(path).unwrap());}
+        }
+    }
+    let mut out=BTreeMap::new();walk(root,root,&mut out);out
+}
 fn edit(
     writer: &str,
     seq: u64,
@@ -11,7 +19,8 @@ fn edit(
     value: serde_json::Value,
 ) -> Operation {
     Operation {
-        version: 1,
+        source: None,
+            version: 1,
         library: "test".into(),
         scope: "configuration".into(),
         dot: Dot {
@@ -153,8 +162,9 @@ impl Fixture {
                     device: name.into(),
                     name: name.into(),
                     auto: false,
+                    lock_timeout_minutes: super::lease::default_timeout(),
                     scopes: vec!["configuration".into()],
-                    retention_days: Some(30),
+                            retention_days: Some(30),
                     scope_keys: BTreeMap::from([("configuration".into(), vec![7; 32])]),
                     provider: transport::Provider::Folder {
                         path: self.0.join("cloud"),
@@ -1206,13 +1216,7 @@ fn provider_migration_backs_up_and_preserves_offline_changes_and_source() {
     let a = fixture.peer("A", &library);
     a.save("hosts", host("published"), None).unwrap();
     local_request(&a, json!({"method":"sync.run"}));
-    let source = std::fs::read_dir(fixture.0.join("cloud"))
-        .unwrap()
-        .map(|p| {
-            let p = p.unwrap();
-            (p.file_name(), std::fs::read(p.path()).unwrap())
-        })
-        .collect::<BTreeMap<_, _>>();
+    let source = cloud_tree(&fixture.0.join("cloud"));
     a.save("hosts", host("offline"), None).unwrap();
     let destination = fixture.0.join("cloud-new");
     local_request(
@@ -1619,13 +1623,7 @@ fn inactive_profile_edit_moves_snapshot_and_password_change_stays_isolated() {
         &a,
         json!({"method":"sync.profile.use","id":id_b,"confirmed":true}),
     );
-    let before = std::fs::read_dir(fixture.0.join("cloud-a"))
-        .unwrap()
-        .map(|p| {
-            let p = p.unwrap();
-            (p.file_name(), std::fs::read(p.path()).unwrap())
-        })
-        .collect::<BTreeMap<_, _>>();
+    let before = cloud_tree(&fixture.0.join("cloud-a"));
     local_request(
         &a,
         json!({"method":"sync.profile.update","id":id_a,"title":"Moved A","provider":{"kind":"folder","path":fixture.0.join("cloud-a-new")},"scopes":["configuration","preferences"],"name":"A","auto":false,"confirmed":true}),

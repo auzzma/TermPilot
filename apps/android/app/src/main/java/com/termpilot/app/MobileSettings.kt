@@ -18,6 +18,7 @@ import androidx.compose.ui.semantics.Role
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun SettingsPanel(model:AppModel,open:(String)->Unit){
+    val appVersion=installedAppVersion()
     var page by remember { mutableStateOf("") }
     var showsLicense by remember { mutableStateOf(false) }
     fun back(){page=if(page=="videoCodec") "terminal" else if(page in listOf("appearance","language","terminal","fps","videoCodec"))"general" else ""}
@@ -65,7 +66,7 @@ import androidx.compose.ui.semantics.Role
                         GroupedSection("保存的配置"){listOf("groups" to "主机分组","scripts" to "脚本","notes" to "笔记","forwards" to "端口转发").forEachIndexed{index,(key,label)->if(index>0)GroupDivider();SettingRow(label,onClick={open(key)})}}
                     }
                     "about"->{
-                        GroupedSection{SettingRow("应用名称",value="TermPilot");GroupDivider();SettingRow("版本",value="0.2.0")}
+                        GroupedSection{SettingRow("应用名称",value="TermPilot");GroupDivider();SettingRow("版本",value=appVersion)}
                         GroupedSection("开源许可"){SettingRow("GNU General Public License v3.0",onClick={showsLicense=true})}
                     }
                 }
@@ -75,6 +76,11 @@ import androidx.compose.ui.semantics.Role
     }
     }
     if(showsLicense)GPLLicenseDialog{showsLicense=false}
+}
+
+@Composable private fun installedAppVersion():String {
+    val context=androidx.compose.ui.platform.LocalContext.current
+    return remember(context){context.packageManager.getPackageInfo(context.packageName,0).versionName.orEmpty()}
 }
 
 @Composable private fun GPLLicenseDialog(close:()->Unit){
@@ -93,6 +99,7 @@ import androidx.compose.ui.semantics.Role
 }
 
 @Composable private fun ColumnScope.SettingsHomeGroups(model:AppModel,open:(String)->Unit,select:(String)->Unit){
+                        val appVersion=installedAppVersion()
 
                         GroupedSection("偏好设置"){
                             SettingRow("通用",Icons.Outlined.Tune,onClick={select("general")});GroupDivider(57.dp)
@@ -109,7 +116,7 @@ import androidx.compose.ui.semantics.Role
                             SettingRow("备份与恢复",Icons.Outlined.Inventory2,onClick={open("backup")});GroupDivider(57.dp)
                             SettingRow("关于 TermPilot",Icons.Outlined.Info,onClick={select("about")})
                         }
-                        Text("TermPilot · 0.2.0",Modifier.align(Alignment.CenterHorizontally),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("TermPilot · $appVersion",Modifier.align(Alignment.CenterHorizontally),style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     
 }
 

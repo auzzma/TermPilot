@@ -125,7 +125,9 @@ fn serve(stream: &mut TcpStream, kind: &str, state: &Mutex<MockState>) -> std::i
     if kind == "webdavToken" {
         assert_eq!(headers["authorization"], "Bearer fixture-token");
     }
-    let name = path.rsplit('/').next().unwrap_or("");
+    let name = if kind.starts_with("webdav") {
+        path.strip_prefix("/objects/").unwrap_or_else(||path.rsplit('/').next().unwrap_or(""))
+    } else { path.rsplit('/').next().unwrap_or("") };
     if method == "PUT" && !state.ignore_conditions {
         let tag = state
             .files
@@ -142,6 +144,7 @@ fn serve(stream: &mut TcpStream, kind: &str, state: &Mutex<MockState>) -> std::i
     let mut status = 200;
     let output = match kind {
         "webdav" | "webdavDigest" | "webdavToken" => match method.as_str() {
+            "MKCOL" => { status=201; vec![] },
             "PROPFIND" => {
                 status = 207;
                 format!(
@@ -156,6 +159,7 @@ fn serve(stream: &mut TcpStream, kind: &str, state: &Mutex<MockState>) -> std::i
                 )
                 .into_bytes()
             }
+            "DELETE" => { state.files.remove(name); status=204; vec![] },
             "PUT" => {
                 state.files.insert(name.into(), body.into());
                 status = 201;
@@ -198,6 +202,8 @@ fn serve(stream: &mut TcpStream, kind: &str, state: &Mutex<MockState>) -> std::i
                     files.iter().map(|name| format!("<Contents><Key>prefix/{name}</Key></Contents>")).collect::<String>(),
                     if truncated {format!("<NextContinuationToken>{next}</NextContinuationToken>")} else {String::new()}
                 ).into_bytes()
+            } else if method == "DELETE" {
+                state.files.remove(name);status=204;vec![]
             } else if method == "PUT" {
                 assert!(headers.contains_key("if-none-match") || headers.contains_key("if-match"));
                 if state.race {
@@ -227,7 +233,7 @@ fn serve(stream: &mut TcpStream, kind: &str, state: &Mutex<MockState>) -> std::i
         );
         write!(
             stream,
-            "HTTP/1.1 200 OK\r\nETag: {tag}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nETag: {tag}\r\nDate: Fri, 09 Oct 2026 00:00:00 GMT\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             output.len()
         )?;
         stream.write_all(&output)
@@ -291,6 +297,26 @@ fn storage_provider_http_contracts_immutable_readback_and_auth_failures() {
             "syncCollision"
         );
         assert!(backend.server_time().is_some());
+        let retired = format!("tp1-{library}-g-{}-chunk-configuration-{}.tps", uuid::Uuid::new_v4(), hex::encode(Sha256::digest(b"retired fixture")));
+        backend.put(&retired, b"retired fixture").unwrap();
+        backend.remove_retired(&retired).unwrap();
+        backend.remove_retired(&retired).unwrap();
+        assert!(backend.get(&retired).unwrap().is_none());
+        let digest = hex::encode(Sha256::digest(b"full version fixture"));
+        let complete = format!("history/full-{library}-{digest}.tps");
+        backend.put(&complete, b"full version fixture").unwrap();
+        assert_eq!(backend.get(&complete).unwrap().unwrap(), b"full version fixture");
+        let foreign = format!("history/full-{}-{digest}.tps", uuid::Uuid::new_v4());
+        backend.put(&foreign, b"full version fixture").unwrap();
+        assert!(backend.remove_retired(&foreign).is_err(), "must preserve another library");
+        assert!(backend.remove_retired(&format!("history/../{complete}")).is_err());
+        backend.remove_retired(&complete).unwrap();
+        assert!(backend.get(&complete).unwrap().is_none());
+        assert!(backend.get(&foreign).unwrap().is_some());
+        assert!(backend.remove_retired(&format!("tp1-{library}-control.tps")).is_err());
+        server.state.lock().unwrap().files.insert(retired.clone(), b"modified data".to_vec());
+        assert_eq!(backend.remove_retired(&retired).unwrap_err().code, "syncIntegrity");
+        assert!(backend.get(&retired).unwrap().is_some());
         server.state.lock().unwrap().reject = true;
         assert_eq!(backend.list().unwrap_err().code, "syncAuth", "{kind}");
     }

@@ -187,7 +187,7 @@ fn inventory(cloud: &mut dyn Objects) -> Result<Vec<String>> {
 /// new generation. Republishing every peer's history would multiply cloud data.
 /// This deliberately keeps operation IDs, causal clocks, tombstones and local
 /// journals: an offline peer's unsent work must not be replaced by a snapshot.
-fn switch_local(store: &Store<'_>, mut config: Config) -> Result<()> {
+pub(super) fn switch_local(store: &Store<'_>, mut config: Config) -> Result<()> {
     let previous = store.config()?;
     config.scopes = previous.scopes.clone();
     config.auto = previous.auto;
@@ -220,7 +220,12 @@ fn switch_local(store: &Store<'_>, mut config: Config) -> Result<()> {
                 }
             }
         }
-        runtime::maybe_snapshot(store,true)?;
+        // A newly joining replica has no published history to preserve yet.
+        // Publishing an empty checkpoint here would clutter cloud history before
+        // the verified generation has even been downloaded.
+        if config.scopes.iter().any(|scope| store.published_state(scope).map(|state| !state.frontier.is_empty()).unwrap_or(true)) {
+            runtime::maybe_snapshot(store,true)?;
+        }
         store.put("passwordRequired",&false)?;store.put("lastError",&Value::Null)?;
         store.put("nextAttempt",&0i64)?;
         Ok(())
@@ -237,7 +242,12 @@ pub(super) fn adopt_matching(store: &Store<'_>, cloud: &mut dyn Objects) -> Resu
     if head.sequence < config.generation_sequence || head.verify(&config).is_err() {
         return Ok(());
     }
-    if head.lock.is_some() {
+    if head.lock.as_ref().is_some_and(|lock| {
+        head.version < 3
+            || lock
+                .expires_at
+                .is_none_or(|expiry| cloud.server_time().is_none_or(|now| now < expiry))
+    }) {
         return Err(err("syncCloudBusy", "其它设备尚未完成同步，请稍后重试。"));
     }
     config.generation = head.generation;
@@ -260,7 +270,12 @@ pub(super) fn unlock(store: &Store<'_>, cloud: &mut dyn Objects, password: &str)
     if head.sequence < config.generation_sequence {
         return Err(err("syncRollback", "云端 Key 版本回退，已停止同步。"));
     }
-    if head.lock.is_some() {
+    if head.lock.as_ref().is_some_and(|lock| {
+        head.version < 3
+            || lock
+                .expires_at
+                .is_none_or(|expiry| cloud.server_time().is_none_or(|now| now < expiry))
+    }) {
         return Err(err(
             "syncCloudBusy",
             "其它设备尚未完成同步或修改 Key，请稍后重试。",
@@ -292,7 +307,15 @@ pub(super) fn resume(vault: &Vault, store: &Store<'_>, cloud: &mut dyn Objects) 
     }
     update(store, "locking", 3, 0, 0, 0)?;
     let lease = control::acquire(store, cloud, "password")?;
-    let guard = Some(lease.bytes.clone());
+    if lease.head()?.bundles.is_some() {
+        let ai = runtime::ai_database(vault)?;
+        runtime::drain(store, ai.as_ref())?;
+        super::bundle::run(vault, store, cloud, &lease)?;
+        super::bundle::rotate(store, cloud, &lease, &old, &new)?;
+        drop(lease);
+        return finish(vault, store, cloud, new);
+    }
+    let guard = Some(&lease);
     if job.phase == "preparing" {
         update(store, "synchronizing", 8, 0, 0, 0)?;
         let ai = runtime::ai_database(vault)?;
@@ -542,17 +565,8 @@ pub(super) fn resume(vault: &Vault, store: &Store<'_>, cloud: &mut dyn Objects) 
     }
     target.check()?;
     update(store, "switching", 97, count, count, bytes)?;
-    let mut head = control::Head::new(&new);
-    head.lock = None;
-    let committed = head.signed(&new)?;
-    if !cloud.compare_exchange(&control::name(&new.library), Some(&lease.bytes), &committed)? {
-        if cloud.get(&control::name(&new.library))?.as_deref() != Some(&committed) {
-            return Err(err(
-                "syncCloudBusy",
-                "切换时云端状态变化，请继续任务核对结果。",
-            ));
-        }
-    }
+    lease.cutover(cloud, &new, names)?;
+    drop(lease);
     finish(vault, store, cloud, new)
 }
 fn finish(vault: &Vault, store: &Store<'_>, cloud: &mut dyn Objects, new: Config) -> Result<Value> {
@@ -564,12 +578,14 @@ fn finish(vault: &Vault, store: &Store<'_>, cloud: &mut dyn Objects, new: Config
     // under the new generation, including recovery after a lost cutover reply.
     let config = store.config()?;
     let lease = control::acquire(store, cloud, "password-finishing")?;
-    {
+    if lease.head()?.bundles.is_some() {
+        super::bundle::run(vault, store, cloud, &lease)?;
+    } else {
         let mut target = Namespace {
             cloud,
             library: config.library,
             generation: config.generation,
-            guard: Some(lease.bytes.clone()),
+            guard: Some(&lease),
         };
         runtime::exchange(store, &mut target)?;
         runtime::exchange(store, &mut target)?;

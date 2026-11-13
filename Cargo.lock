@@ -4615,7 +4615,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "termpilot-ai"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -4640,7 +4640,7 @@ dependencies = [
 
 [[package]]
 name = "termpilot-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes-gcm 0.10.3",
  "base64 0.22.1",
@@ -4666,7 +4666,7 @@ dependencies = [
 
 [[package]]
 name = "termpilot-engine"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes 0.8.4",
  "anyhow",
@@ -4706,7 +4706,7 @@ dependencies = [
 
 [[package]]
 name = "termpilot-mobile"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4723,7 +4723,7 @@ dependencies = [
 
 [[package]]
 name = "termpilot-rdp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

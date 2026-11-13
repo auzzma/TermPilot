@@ -73,6 +73,12 @@ class AndroidPrivateKeyTests(unittest.TestCase):
 
 
 class AndroidAPKIdentityTests(unittest.TestCase):
+    def setUp(self):
+        # These mocked APKs deliberately represent a fixed historical release.
+        source_code = patch.object(android_signing, 'android_version_code', return_value=22)
+        source_code.start()
+        self.addCleanup(source_code.stop)
+
     def verify(self, fingerprint=None, code=22, package='com.termpilot.app', version='0.2.0', abi='arm64-v8a', debug=False):
         expected = android_signing.policy()['certificate_sha256']
         certificate = f'Signer #1 certificate SHA-256 digest: {fingerprint or expected}\n'.encode()

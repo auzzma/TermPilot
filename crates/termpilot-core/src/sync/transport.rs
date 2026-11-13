@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-const LIMIT: usize = 8 * 1024 * 1024;
+const LIMIT: usize = super::bundle::LIMIT;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Provider {
@@ -104,6 +104,18 @@ pub trait Objects {
     fn get(&mut self, name: &str) -> Result<Option<Vec<u8>>>;
     fn put(&mut self, name: &str, data: &[u8]) -> Result<()>;
     fn server_time(&self) -> Option<i64>;
+    /// Only maintenance may call this, for an authenticated, retired generation.
+    /// The namespace can never become current again; live objects are not deleted.
+    fn remove_retired(&mut self, _name: &str) -> Result<()> {
+        Err(err(
+            "syncCleanupPermission",
+            "云服务未允许历史文件清理，同步数据已保留。",
+        ))
+    }
+    /// A separate connection lets the lease renew during large downloads/CPU work.
+    fn lease_connection(&self) -> Result<Option<Box<dyn Objects + Send>>> {
+        Ok(None)
+    }
     /// Atomically replace a small control object only if its exact previous bytes
     /// still match. Unsupported providers must fail closed, never emulate CAS.
     fn check_conditionals(&mut self, _library: &str) -> Result<()> {
@@ -126,7 +138,7 @@ pub struct Backend {
     client: Client,
     prefix: String,
     ids: BTreeMap<String, String>,
-    clock: Option<i64>,
+    clock: Option<(i64, std::time::Instant)>,
 }
 fn network(_: reqwest::Error) -> super::CoreError {
     err(
@@ -137,9 +149,12 @@ fn network(_: reqwest::Error) -> super::CoreError {
 fn valid_name(name: &str) -> Result<()> {
     if name.len() > 220
         || name.is_empty()
+        || name
+            .split('/')
+            .any(|p| p.is_empty() || p == "." || p == "..")
         || !name
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_')
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_' || b == b'/')
     {
         Err(err("syncObject", "同步对象名称无效。"))
     } else {
@@ -304,13 +319,14 @@ impl Backend {
         if status == 429 {
             return Err(err("syncRateLimit", "云服务限流，请稍后重试。"));
         }
+        self.clock = None;
         if let Some(date) = response
             .headers()
             .get("date")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
         {
-            self.clock = Some(date.timestamp());
+            self.clock = Some((date.timestamp(), std::time::Instant::now()));
         }
         if response.content_length().unwrap_or(0) > LIMIT as u64 {
             return Err(err("syncSize", "云端对象超过允许大小。"));
@@ -473,6 +489,60 @@ impl Backend {
     }
 }
 impl Objects for Backend {
+    fn remove_retired(&mut self, name: &str) -> Result<()> {
+        valid_name(name)?;
+        if !((name.starts_with(&self.prefix) && super::maintenance::content_object(name))
+            || super::bundle::content_path(
+                self.prefix.trim_start_matches("tp1-").trim_end_matches('-'),
+                name,
+            ))
+        {
+            return Err(err("syncCleanup", "拒绝清理同步数据以外的文件。"));
+        }
+        let Some(bytes) = self.get(name)? else {
+            return Ok(());
+        };
+        if !name.ends_with(&format!("-{}.tps", hex::encode(Sha256::digest(&bytes)))) {
+            return Err(err("syncIntegrity", "历史文件校验失败，已停止清理。"));
+        }
+        match &self.provider {
+            Provider::Folder { path } => {
+                let path = path.join(name);
+                if std::fs::symlink_metadata(&path)
+                    .map_err(|_| err("syncIO", "无法检查历史文件。"))?
+                    .file_type()
+                    .is_symlink()
+                {
+                    return Err(err("syncCleanup", "拒绝清理链接文件。"));
+                }
+                std::fs::remove_file(path)
+                    .map_err(|_| err("syncCleanupPermission", "无法清理历史文件。"))?;
+            }
+            _ => {
+                let request = match &self.provider {
+                    Provider::Webdav { .. } => self.webdav(Method::DELETE, name),
+                    Provider::S3 { .. } | Provider::R2 { .. } => {
+                        self.s3(Method::DELETE, name, &[], &[])?
+                    }
+                    _ => return Err(err("syncCleanupPermission", "云服务不支持历史清理。")),
+                };
+                let (status, _) = self.read(request)?;
+                if status != 404 && !(200..300).contains(&status) {
+                    return Err(err(
+                        "syncCleanupPermission",
+                        "历史清理未完成，请检查对象删除权限；正常同步可继续。",
+                    ));
+                }
+            }
+        }
+        if self.get(name)?.is_some() {
+            return Err(err(
+                "syncCleanup",
+                "历史文件删除尚未确认，将在下次同步重试。",
+            ));
+        }
+        Ok(())
+    }
     fn list(&mut self) -> Result<Vec<String>> {
         self.ids.clear();
         let mut pages = 0usize;
@@ -586,13 +656,14 @@ impl Objects for Backend {
                     _ => unreachable!(),
                 };
                 let response = self.send(request)?;
+                self.clock = None;
                 if let Some(time) = response
                     .headers()
                     .get("date")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|s| chrono::DateTime::parse_from_rfc2822(s).ok())
                 {
-                    self.clock = Some(time.timestamp());
+                    self.clock = Some((time.timestamp(), std::time::Instant::now()));
                 }
                 response_bytes(response)
             }
@@ -600,7 +671,7 @@ impl Objects for Backend {
     }
     fn put(&mut self, name: &str, data: &[u8]) -> Result<()> {
         valid_name(name)?;
-        if data.len() > 512 * 1024 {
+        if data.len() > super::bundle::LIMIT {
             return Err(err("syncSize", "同步对象需要分块后上传。"));
         }
         if let Some(existing) = self.get(name)? {
@@ -608,6 +679,35 @@ impl Objects for Backend {
                 return Ok(());
             }
             return Err(err("syncCollision", "云端同名对象内容不同，已停止覆盖。"));
+        }
+        if let Some((parent, _)) = name.rsplit_once('/') {
+            match &self.provider {
+                Provider::Folder { path } => {
+                    let directory = path.join(parent);
+                    if std::fs::symlink_metadata(&directory)
+                        .is_ok_and(|m| m.file_type().is_symlink())
+                    {
+                        return Err(err("syncPath", "同步目录不能是符号链接。"));
+                    }
+                    std::fs::create_dir_all(directory)
+                        .map_err(|_| err("syncIO", "无法创建版本目录。"))?;
+                }
+                Provider::Webdav { .. } => {
+                    let mut directory = String::new();
+                    for part in parent.split('/') {
+                        if !directory.is_empty() {
+                            directory.push('/');
+                        }
+                        directory.push_str(part);
+                        let (status, _) = self
+                            .read(self.webdav(Method::from_bytes(b"MKCOL").unwrap(), &directory))?;
+                        if !matches!(status, 200 | 201 | 204 | 405) {
+                            return Err(err("syncWebDAV", "无法创建完整版本目录。"));
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
         match self.provider.clone() {
             Provider::Folder { path } => {
@@ -664,7 +764,19 @@ impl Objects for Backend {
         self.verify(name, data)
     }
     fn server_time(&self) -> Option<i64> {
+        if matches!(self.provider, Provider::Folder { .. }) {
+            return Some(chrono::Utc::now().timestamp());
+        }
         self.clock
+            .map(|(time, observed)| time + observed.elapsed().as_secs() as i64)
+    }
+    fn lease_connection(&self) -> Result<Option<Box<dyn Objects + Send>>> {
+        let library = self
+            .prefix
+            .strip_prefix("tp1-")
+            .and_then(|p| p.strip_suffix('-'))
+            .unwrap_or("");
+        Ok(Some(Box::new(Self::new(self.provider.clone(), library)?)))
     }
     fn check_conditionals(&mut self, library: &str) -> Result<()> {
         if matches!(self.provider, Provider::Folder { .. }) {
@@ -715,7 +827,7 @@ impl Objects for Backend {
         data: &[u8],
     ) -> Result<bool> {
         valid_name(name)?;
-        if data.len() > 64 * 1024 {
+        if data.len() > 2 * 1024 * 1024 {
             return Err(err("syncSize", "同步控制信息过大。"));
         }
         if let Provider::Folder { path } = &self.provider {

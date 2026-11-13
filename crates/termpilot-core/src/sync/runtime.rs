@@ -18,7 +18,7 @@ pub(super) struct Manifest {
     version: u32,
     pub kind: String,
     scope: String,
-    chunks: Vec<String>,
+    pub(super) chunks: Vec<String>,
     digest: String,
     size: usize,
     #[serde(default)]
@@ -533,15 +533,9 @@ fn status(store: &Store<'_>) -> Result<Value> {
         gaps += state.waiting.len();
         for (id, record) in &state.records {
             if record.conflicted() {
-                let mut fields = record.fields.clone();
-                if matches!(scope.as_str(), "credentials" | "aiSecrets") {
-                    for candidate in fields.values_mut().flatten() {
-                        candidate.value = json!("••••••");
-                    }
-                }
-                conflicts.push(
-                    json!({"scope":scope,"id":id,"deleted":record.deleted(),"fields":fields}),
-                );
+                conflicts.push(super::conflicts::describe(
+                    store, &config, scope, id, record, &state,
+                )?);
             }
         }
         for (id, item) in &state.recycle {
@@ -552,6 +546,9 @@ fn status(store: &Store<'_>) -> Result<Value> {
     }
     let mut snapshots = store.get::<Vec<Value>>("snapshots")?.unwrap_or_default();
     for snapshot in &mut snapshots {
+        if snapshot["fullVersion"] == true {
+            continue;
+        }
         let mut verified = true;
         for object in snapshot["objects"].as_array().into_iter().flatten() {
             let exists: bool = store
@@ -567,7 +564,7 @@ fn status(store: &Store<'_>) -> Result<Value> {
         snapshot["verified"] = json!(verified);
     }
     Ok(
-        json!({"configured":true,"profiles":super::profiles::list(store)?,"activeProfile":super::profiles::active(store)?,"passwordChange":super::rekey::progress(store)?,"passwordRequired":store.get::<bool>("passwordRequired")?.unwrap_or(false),"keyVersion":config.generation_sequence,"remoteSyncBusy":store.get::<Value>("remoteSyncBusy")?,"library":config.library,"device":config.device,"name":config.name,"auto":config.auto && !matches!(config.provider, Provider::Unavailable),"providerUnavailable":matches!(config.provider, Provider::Unavailable),"scopes":config.scopes,"retentionDays":config.retention_days,"provider":config.provider.public(),"pending":pending,"gaps":gaps,"conflicts":conflicts,"recycle":recycle,"lastCheck":store.get::<Value>("lastCheck")?,"lastError":store.get::<Value>("lastError")?,"preferences":store.get::<Value>("preferences")?.unwrap_or(json!({})),"snapshots":snapshots}),
+        json!({"configured":true,"profiles":super::profiles::list(store)?,"activeProfile":super::profiles::active(store)?,"passwordChange":super::rekey::progress(store)?,"passwordRequired":store.get::<bool>("passwordRequired")?.unwrap_or(false),"keyVersion":config.generation_sequence,"remoteSyncBusy":store.get::<Value>("remoteSyncBusy")?,"library":config.library,"device":config.device,"name":config.name,"auto":config.auto && !matches!(config.provider, Provider::Unavailable),"providerUnavailable":matches!(config.provider, Provider::Unavailable),"scopes":config.scopes,"retentionDays":config.retention_days,"lockTimeoutMinutes":config.lock_timeout_minutes,"historyVersionCount":store.get::<super::bundle::History>("bundleHistory")?.map(|h|h.keep).unwrap_or(10),"pendingHistoryVersionCount":store.get::<u32>("pendingHistoryKeep")?,"fullVersionSync":store.get::<super::bundle::History>("bundleHistory")?.is_some(),"objectRecovery":store.get::<Value>("objectRecovery")?,"maintenance":store.get::<Value>("maintenanceStatus")?,"lockRecoveryBackup":store.get::<Value>("lockRecoveryBackup")?,"provider":config.provider.public(),"pending":pending,"gaps":gaps,"conflicts":conflicts,"recycle":recycle,"lastCheck":store.get::<Value>("lastCheck")?,"lastError":store.get::<Value>("lastError")?,"preferences":store.get::<Value>("preferences")?.unwrap_or(json!({})),"snapshots":snapshots}),
     )
 }
 pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
@@ -764,6 +761,11 @@ pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
         }
         let existing = store.get::<Config>("config")?;
         if let Some(mut config) = existing {
+            config.lock_timeout_minutes =
+                super::lease::timeout(request, config.lock_timeout_minutes)?;
+            if let Some(value) = request.get("historyVersionCount") {
+                store.put("pendingHistoryKeep", &super::bundle::parse_keep(value)?)?;
+            }
             let ai = ai_database(&vault)?;
             drain(&store, ai.as_ref())?;
             let requested = if request["scopes"].is_array() {
@@ -863,6 +865,7 @@ pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
             name: request["name"].as_str().unwrap_or("TermPilot").into(),
             auto: request["auto"].as_bool().unwrap_or(false),
             scopes,
+            lock_timeout_minutes: super::lease::timeout(request, super::lease::default_timeout())?,
             retention_days: Some(30),
             scope_keys,
             provider,
@@ -910,29 +913,42 @@ pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
     }
     drain(&store, ai.as_ref())?;
     match method {
-        "sync.run" => {
+        "sync.snapshot.import" => super::bundle::import_file(&store, request),
+        "sync.repair" => {
+            let config = store.config()?;
+            let mut cloud = Backend::new(config.provider.clone(), &config.library)?;
+            let lease = super::control::acquire(&store, &mut cloud, "repair")?;
+            let result = super::bundle::repair(&vault, &store, &mut cloud, &lease);
+            let released = super::control::release(&store, &mut cloud, &lease);
+            let restored = result?;
+            released?;
+            store.put(
+                "objectRecovery",
+                &json!({"restored":restored,"at":chrono::Utc::now().to_rfc3339()}),
+            )?;
+            store.put("lastError", &Value::Null)?;
+            status(&store)
+        }
+        "sync.lock.inspect" => {
+            let config = store.config()?;
+            let mut cloud = Backend::new(config.provider.clone(), &config.library)?;
+            super::legacy_lock::inspect(&store, &mut cloud)
+        }
+        "sync.run" | "sync.lock.recover" => {
             super::progress::stage("connecting", 0, None);
             let config = store.config()?;
             let mut cloud = Backend::new(config.provider.clone(), &config.library)?;
-            super::rekey::adopt_matching(&store, &mut cloud)?;
-            let config = store.config()?;
-            let lease = super::control::acquire(&store, &mut cloud, "sync")?;
-            {
-                let mut backend = super::control::Namespace {
-                    cloud: &mut cloud,
-                    library: config.library,
-                    generation: config.generation,
-                    guard: Some(lease.bytes.clone()),
-                };
-                exchange(&store, &mut backend)?;
-                store.transaction(|| {
-                    maybe_snapshot(&store, false)?;
-                    expire_recycle(&store, backend.server_time())
-                })?;
-                exchange(&store, &mut backend)?;
-            }
-            super::progress::stage("finalizing", 0, None);
-            super::control::release(&store, &mut cloud, &lease)?;
+            let recovering = method == "sync.lock.recover";
+            let lease = if recovering {
+                super::legacy_lock::recover(&vault, &store, &mut cloud, request)?
+            } else {
+                super::rekey::adopt_matching(&store, &mut cloud)?;
+                super::control::acquire(&store, &mut cloud, "sync")?
+            };
+            let result = super::bundle::run(&vault, &store, &mut cloud, &lease);
+            let released = super::control::release(&store, &mut cloud, &lease);
+            result?;
+            released?;
             project_current(&vault, &store)?;
             status(&store)
         }
@@ -995,6 +1011,13 @@ pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
             status(&store)
         }
         "sync.snapshot" => {
+            if store
+                .get::<super::bundle::History>("bundleHistory")?
+                .is_some()
+            {
+                store.put("forceFullVersion", &true)?;
+                return status(&store);
+            }
             store.transaction(|| maybe_snapshot(&store, true))?;
             status(&store)
         }
@@ -1036,6 +1059,7 @@ pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
             status(&store)
         }
         "sync.snapshot.preview" | "sync.snapshot.restore" => {
+            super::bundle::load_snapshot(&store, request["id"].as_str().unwrap_or(""))?;
             let result = restore_snapshot(&store, request)?;
             if request["confirmed"] == true {
                 if let Some(ai) = ai.as_ref() {
@@ -1055,6 +1079,7 @@ pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
             }
             Ok(result)
         }
+        "sync.conflict.preview" => super::conflicts::preview(&store, request),
         "sync.resolve" => {
             let scope = request["scope"].as_str().unwrap_or("configuration");
             let id = request["id"].as_str().unwrap_or("");
@@ -1062,6 +1087,7 @@ pub fn dispatch(request: &Value, supplied_key: Option<&[u8]>) -> Result<Value> {
                 .split_once('/')
                 .ok_or_else(|| err("syncRecord", "冲突记录无效。"))?;
             let state = store.state(scope)?;
+            super::conflicts::check_revision(&store, request, &state, id)?;
             if let Some(record) = state.records.get(id).filter(|r| r.deleted()) {
                 if request["keepDeleted"] != true {
                     return Err(err(
@@ -1707,27 +1733,45 @@ fn check_connection_readonly(request: &Value, supplied_key: Option<&[u8]>) -> Re
     }
     let key = zeroize::Zeroizing::new(match supplied_key {
         Some(key) => key.to_vec(),
-        None => std::fs::read(request["keyPath"].as_str().map(std::path::PathBuf::from)
-            .unwrap_or_else(|| directory.join("credential.key")))
-            .map_err(|_| err("missingCredentialKey", "The existing vault's credential key is missing."))?,
+        None => std::fs::read(
+            request["keyPath"]
+                .as_str()
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| directory.join("credential.key")),
+        )
+        .map_err(|_| {
+            err(
+                "missingCredentialKey",
+                "The existing vault's credential key is missing.",
+            )
+        })?,
     });
     if key.len() != 32 {
         return Err(err("invalidCredentialKey", "Invalid credential key."));
     }
-    let database = request["databasePath"].as_str().map(std::path::PathBuf::from)
+    let database = request["databasePath"]
+        .as_str()
+        .map(std::path::PathBuf::from)
         .unwrap_or_else(|| directory.join("vault.sqlite"));
     if !database.is_absolute() {
         return Err(err("invalidPath", "Vault path must be absolute."));
     }
-    let mut db = Connection::open_with_flags(database,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+    let mut db = Connection::open_with_flags(
+        database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(db_error)?;
+    db.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(db_error)?;
-    db.busy_timeout(std::time::Duration::from_secs(5)).map_err(db_error)?;
     // One consistent WAL snapshot, with no migrations, trigger installation or writes.
     let tx = db.transaction().map_err(db_error)?;
-    let installed: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='tp_sync_values')", [], |row| row.get(0)
-    ).map_err(db_error)?;
+    let installed: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='tp_sync_values')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?;
     if installed {
         check_connection(&Store { db: &tx, key: &key }, &request["host"])?;
     }

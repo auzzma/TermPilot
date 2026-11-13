@@ -4,7 +4,7 @@ resolver = "2"
 exclude = ["vendor/ironrdp-client", "engines/rdp", "vendor/picky-mobile", "vendor/sspi-mobile", "vendor/ironrdp-tls-mobile"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "GPL-3.0-or-later"
 

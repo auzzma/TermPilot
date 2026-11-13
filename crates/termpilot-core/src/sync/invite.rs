@@ -192,6 +192,7 @@ pub(super) fn dispatch(
             .collect(),
         auto: true,
         scopes,
+        lock_timeout_minutes: super::lease::default_timeout(),
         retention_days: Some(30),
         scope_keys: keys,
         provider: invite.provider.clone(),

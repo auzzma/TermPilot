@@ -16,6 +16,8 @@ pub struct Config {
     pub device: String,
     pub name: String,
     pub auto: bool,
+    #[serde(default = "super::lease::default_timeout")]
+    pub lock_timeout_minutes: u32,
     pub scopes: Vec<String>,
     pub retention_days: Option<u32>,
     // Key material and cloud authorization are encrypted under the existing device key.
@@ -149,6 +151,9 @@ impl<'a> Store<'a> {
         record: &str,
         action: Action,
     ) -> Result<Operation> {
+        self.append_at(scope, writer, basis, collection, record, action, None)
+    }
+    fn append_at(&self, scope: &str, writer: &str, basis: &Vector, collection: &str, record: &str, action: Action, at: Option<&str>) -> Result<Operation> {
         let config = self.config()?;
         let mut basis = basis.clone();
         let stored: u64 = self
@@ -182,6 +187,8 @@ impl<'a> Store<'a> {
             basis,
             collection: collection.into(),
             record: record.into(),
+            source: Some(super::model::Source { device: config.device, name: config.name,
+                at: at.map(str::to_owned).unwrap_or_else(||chrono::Utc::now().to_rfc3339()) }),
             action,
         };
         self.receive(&operation, false)?;
@@ -336,13 +343,14 @@ impl<'a> Store<'a> {
                         Action::Patch { fields }
                     };
                     let deletion = matches!(&action, Action::Delete { .. });
-                    let operation = self.append(
+                    let operation = self.append_at(
                         scope,
                         &self.profile_writer(event["origin"].as_str().unwrap_or(&origin))?,
                         &basis,
                         collection,
                         record,
                         action,
+                        event["at"].as_str(),
                     )?;
                     if deletion {
                         self.put(

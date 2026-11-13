@@ -27,7 +27,9 @@ struct SyncOperationProgress: View {
                         Spacer()
                         if let percent = current["percent"] as? Int { Text("\(percent)%").monospacedDigit() }
                     }
-                    if let percent = current["percent"] as? Int {
+                    if phase == "failed" {
+                        Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                    } else if let percent = current["percent"] as? Int {
                         ProgressView(value: Double(percent), total: 100).tint(phase == "failed" ? .orange : .accentColor)
                     } else { ProgressView().frame(maxWidth: .infinity, alignment: .leading) }
                     if let total = current["total"] as? Int, phase != "completed" {

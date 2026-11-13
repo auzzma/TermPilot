@@ -186,7 +186,7 @@ pub(super) fn list(store: &Store<'_>) -> Result<Vec<Value>> {
         } else {
             store.db.query_row("SELECT COUNT(*) FROM tp_sync_saved_operations WHERE profile=?1 AND published=0", [id], |r| r.get(0))
         }.map_err(db_error)?;
-        Ok(json!({"id":id,"title":p.title,"active":selected,"provider":c.provider.public(),"library":c.library,"name":c.name,"auto":c.auto,"scopes":c.scopes,"pending":pending}))
+        Ok(json!({"id":id,"title":p.title,"active":selected,"provider":c.provider.public(),"library":c.library,"name":c.name,"auto":c.auto,"lockTimeoutMinutes":c.lock_timeout_minutes,"scopes":c.scopes,"pending":pending}))
     }).collect()
 }
 fn title(request: &Value) -> Result<String> {
@@ -280,7 +280,8 @@ pub(super) fn dispatch(vault: &Vault, store: &Store<'_>, request: &Value) -> Res
                 name: request["name"].as_str().unwrap_or("TermPilot").into(),
                 auto: request["auto"] == true,
                 scopes,
-                retention_days: Some(30),
+                lock_timeout_minutes: super::lease::timeout(request, super::lease::default_timeout())?,
+            retention_days: Some(30),
                 scope_keys,
                 provider,
             };
@@ -300,6 +301,7 @@ pub(super) fn dispatch(vault: &Vault, store: &Store<'_>, request: &Value) -> Res
         "sync.profile.update" => {
             let mut profile = read(store, id)?;
             let mut c = config(store, id)?;
+            c.lock_timeout_minutes = super::lease::timeout(request, c.lock_timeout_minutes)?;
             blocked(store, id)?;
             profile.title = title(request)?;
             if request["library"].as_str().is_some_and(|s| s != c.library) {

@@ -27,10 +27,11 @@ internal class SyncWebDAVFixture:AutoCloseable {
                 val length=headers["content-length"]?.toInt()?:0
                 val body=ByteArray(length)
                 var read=0;while(read<length){val n=input.read(body,read,length-read);check(n>0);read+=n}
-                val method=first[0];val name=first[1].substringBefore('?').substringAfterLast('/')
+                val method=first[0];val name=first[1].substringBefore('?').removePrefix("/objects/")
                 var status=200;var output=byteArrayOf();var etag:String?=null
                 fun tag(data:ByteArray)="\""+MessageDigest.getInstance("SHA-256").digest(data).joinToString(""){"%02x".format(it)}+"\""
                 when(method){
+                    "MKCOL"->{status=201}
                     "PROPFIND"->{status=207;output=("<d:multistatus xmlns:d=\"DAV:\">"+files.keys.joinToString(""){"<d:response><d:href>/objects/$it</d:href></d:response>"}+"</d:multistatus>").toByteArray()}
                     "PUT"->{
                         val current=files[name]?.let{tag(it)}
@@ -41,7 +42,7 @@ internal class SyncWebDAVFixture:AutoCloseable {
                     "DELETE"->{files.remove(name);status=204}
                     else->status=405
                 }
-                val header="HTTP/1.1 $status Fixture\r\nContent-Length: ${output.size}\r\nConnection: close\r\n"+(etag?.let{"ETag: $it\r\n"}?:"")+"\r\n"
+                val header="HTTP/1.1 $status Fixture\r\nContent-Length: ${output.size}\r\nDate: ${java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC))}\r\nConnection: close\r\n"+(etag?.let{"ETag: $it\r\n"}?:"")+"\r\n"
                 client.getOutputStream().apply{write(header.toByteArray());write(output);flush()}
             }
         }

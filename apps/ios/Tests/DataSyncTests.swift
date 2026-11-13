@@ -2,6 +2,74 @@ import XCTest
 @testable import TermPilot
 
 final class DataSyncTests: XCTestCase {
+    func testCompleteVersionHistoryAndOfflineImport() async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("full-version-\(UUID().uuidString)")
+        defer {try? FileManager.default.removeItem(at:root)}
+        let runtime=try MobileRuntime(directory:root.appendingPathComponent("local"),testKey:Data(repeating:17,count:32))
+        defer {runtime.stop()}
+        let cloud=root.appendingPathComponent("cloud")
+        _ = try await runtime.call(["method":"sync.configure","provider":["kind":"folder","path":cloud.path],"passphrase":"full-version-fixture-key","confirmed":true])
+        _ = try await runtime.call(["method":"sync.configure","historyVersionCount":1,"confirmed":true])
+        for _ in 0..<3 { _ = try await runtime.call(["method":"sync.snapshot"]);_ = try await runtime.call(["method":"sync.run"]) }
+        let status=try await runtime.call(["method":"sync.status"])
+        XCTAssertEqual(status["fullVersionSync"] as? Bool,true)
+        XCTAssertEqual(status["historyVersionCount"] as? Int,1)
+        XCTAssertEqual(status.array("snapshots").count,2)
+        let files=FileManager.default.enumerator(at:cloud,includingPropertiesForKeys:nil)!.allObjects.compactMap{$0 as? URL}
+        let current=try XCTUnwrap(files.first{$0.lastPathComponent.hasPrefix("full-") && $0.deletingLastPathComponent().lastPathComponent == "current"})
+        let standalone=root.appendingPathComponent("single.tps")
+        try FileManager.default.copyItem(at:current,to:standalone)
+        try FileManager.default.removeItem(at:cloud)
+        let imported=try await runtime.call(["method":"sync.snapshot.import","path":standalone.path,"passphrase":"full-version-fixture-key"])
+        let preview=try await runtime.call(["method":"sync.snapshot.preview","id":imported["id"]!])
+        XCTAssertEqual(preview["preview"] as? Bool,true)
+    }
+
+    func testConflictDetailsAndSelectedResolutionThroughNativeBridge() async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("TermPilot-conflicts-\(UUID().uuidString)")
+        defer {try? FileManager.default.removeItem(at:root)}
+        let a=try MobileRuntime(directory:root.appendingPathComponent("A"),testKey:Data(repeating:17,count:32))
+        let b=try MobileRuntime(directory:root.appendingPathComponent("B"),testKey:Data(repeating:29,count:32))
+        defer {a.stop();b.stop()};let library=UUID().uuidString
+        for (index,runtime) in [a,b].enumerated() {
+            _ = try await runtime.call(["method":"sync.configure","name":"Device \(index)","library":library,"provider":["kind":"folder","path":root.appendingPathComponent("cloud").path],"passphrase":"conflict-fixture-passphrase","confirmed":true])
+        }
+        _ = try await a.call(["method":"vault.save","collection":"hosts","item":["label":"Development host","hostname":"original.invalid","port":22,"username":"fixture","authentication":"password","connectionKind":"ssh"]])
+        _ = try await a.call(["method":"sync.run"]);_ = try await b.call(["method":"sync.run"])
+        for (runtime,address) in [(a,"first.invalid"),(b,"second.invalid")] {
+            let rows=try await runtime.call(["method":"vault.list","collection":"hosts"])
+            var host=try XCTUnwrap((rows["items"] as? [[String:Any]])?.first)
+            host["hostname"]=address;_ = try await runtime.call(["method":"vault.save","collection":"hosts","item":host])
+        }
+        _ = try await a.call(["method":"sync.run"]);_ = try await b.call(["method":"sync.run"])
+        let status=try await a.call(["method":"sync.run"])
+        let conflict=try XCTUnwrap((status["conflicts"] as? [[String:Any]])?.first)
+        XCTAssertEqual(conflict["title"] as? String,"主机：Development host")
+        let field=try XCTUnwrap((conflict["details"] as? [[String:Any]])?.first(where:{$0["key"] as? String == "hostname"}))
+        XCTAssertEqual(field["label"] as? String,"主机地址 / IP")
+        let candidates=try XCTUnwrap(field["candidates"] as? [[String:Any]])
+        XCTAssertEqual(Set(candidates.compactMap{$0["display"] as? String}),Set(["first.invalid","second.invalid"]))
+        let selected=try XCTUnwrap(candidates.first(where:{$0["display"] as? String == "first.invalid"}))
+        let resolved=try await a.call(["method":"sync.resolve","scope":"configuration","id":conflict["id"]!,"revision":conflict["revision"]!,"choices":["hostname":selected["dot"]!],"confirmed":true])
+        XCTAssertTrue((resolved["conflicts"] as? [[String:Any]] ?? []).isEmpty)
+        XCTAssertNotNil(status["maintenance"])
+        _ = try await a.call(["method":"sync.run"]);_ = try await b.call(["method":"sync.run"])
+        let result=try await b.call(["method":"vault.list","collection":"hosts"])
+        XCTAssertEqual((result["items"] as? [[String:Any]])?.first?["hostname"] as? String,"first.invalid")
+    }
+
+  func testLeaseTimeoutPersistsThroughMobileBridge() async throws {
+    let root=FileManager.default.temporaryDirectory.appendingPathComponent("lease-\(UUID().uuidString)")
+    defer {try? FileManager.default.removeItem(at:root)}
+    let runtime=try MobileRuntime(directory:root.appendingPathComponent("local"),testKey:Data(repeating:17,count:32))
+    defer {runtime.stop()}
+    let initial=try await runtime.call(["method":"sync.configure","provider":["kind":"folder","path":root.appendingPathComponent("cloud").path],"passphrase":"lease-test-passphrase","confirmed":true])
+    XCTAssertEqual(initial["lockTimeoutMinutes"] as? Int,60)
+    _ = try await runtime.call(["method":"sync.configure","lockTimeoutMinutes":19,"confirmed":true])
+    do { _ = try await runtime.call(["method":"sync.configure","lockTimeoutMinutes":1441,"confirmed":true]);XCTFail("invalid timeout accepted") } catch {}
+    let result=try await runtime.call(["method":"sync.run"])
+    XCTAssertEqual(result["lockTimeoutMinutes"] as? Int,19)
+  }
   func testDuplicateDraftAndSyncProgressAcrossMobileBridge() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("copy-progress-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }

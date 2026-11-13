@@ -34,8 +34,16 @@ pub struct Operation {
     pub basis: Vector,
     pub collection: String,
     pub record: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Source>,
     #[serde(flatten)]
     pub action: Action,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Source {
+    pub device: String,
+    pub name: String,
+    pub at: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "camelCase")]
@@ -119,6 +127,8 @@ pub struct State {
     pub restored: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(default)]
     pub published: BTreeMap<String, i64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, Source>,
 }
 pub fn record_key(collection: &str, id: &str) -> String {
     format!("{collection}/{id}")
@@ -170,6 +180,7 @@ impl State {
         Ok(true)
     }
     fn apply(&mut self, op: &Operation) {
+        if let Some(source) = &op.source { self.sources.insert(op.dot.key(), source.clone()); }
         let record = self
             .records
             .entry(record_key(&op.collection, &op.record))
@@ -291,6 +302,12 @@ impl State {
             target.deletes.extend(record.deletes);
         }
         self.fingerprints.extend(other.fingerprints);
+        for (id, source) in other.sources {
+            if self.sources.get(&id).is_some_and(|existing| existing != &source) {
+                return Err(err("syncCollision", "快照中的版本来源信息不一致。"));
+            }
+            self.sources.insert(id, source);
+        }
         for (writer, seq) in other.frontier {
             self.frontier
                 .entry(writer)

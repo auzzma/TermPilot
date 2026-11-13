@@ -16,6 +16,9 @@ spec.loader.exec_module(macos_update)
 
 class MacOSReleaseUpdateTests(unittest.TestCase):
     def setUp(self):
+        fixture_version = patch.object(macos_update, 'project_version', return_value='0.2.0')
+        fixture_version.start()
+        self.addCleanup(fixture_version.stop)
         self.version = '0.2.0'
         self.commit = 'a'*40
         self.mac = 'TermPilot-0.2.0-macos-arm64.zip'

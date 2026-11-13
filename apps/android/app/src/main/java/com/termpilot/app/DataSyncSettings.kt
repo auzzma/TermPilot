@@ -16,9 +16,20 @@ import androidx.compose.ui.window.DialogProperties
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.io.File
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable fun DataSyncSettings(model:AppModel,close:()->Unit){
     val scope=rememberCoroutineScope()
+    val context=LocalContext.current
+    var versionFile by remember{mutableStateOf<Uri?>(null)}
+    var versionKey by remember{mutableStateOf("")}
+    val chooseVersion=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()){uri->versionFile=uri;versionKey=""}
     var metadata by remember{mutableStateOf(JSONObject())};var status by remember{mutableStateOf(JSONObject())}
     var provider by remember{mutableStateOf("webdav")};val fields=remember{mutableStateMapOf<String,String>()}
     var inviteEditor by remember{mutableStateOf<JSONObject?>(null)}
@@ -26,7 +37,8 @@ import java.util.UUID
     var busy by remember{mutableStateOf(false)};var error by remember{mutableStateOf("")};var confirm by remember{mutableStateOf<Pair<String,JSONObject>?>(null)}
     var recycleSearch by remember{mutableStateOf("")};var retentionMenu by remember{mutableStateOf(false)}
     suspend fun load(){metadata=model.call(obj("method" to "sync.describe"));status=model.call(obj("method" to "sync.status"));if(status.optBoolean("configured")){status.optJSONObject("provider")?.let{cloud->provider=cloud.optString("kind","webdav").takeIf{kind->metadata.objects("providers").any{it.optString("id")==kind}}?:"webdav";fields.clear();cloud.keys().forEach{key->if(cloud.opt(key) is String)fields[key]=cloud.getString(key)}}}}
-    fun run(request:JSONObject){busy=true;error="";scope.launch{try{model.call(request);if(request.optString("method")=="sync.profile.use")model.call(obj("method" to "sync.run"))}catch(e:Exception){error=e.message?:"同步失败"}finally{try{load();model.reload()}catch(e:Exception){if(error.isEmpty())error=e.message?:"无法读取同步配置"};busy=false}}}
+    fun run(request:JSONObject){busy=true;error="";scope.launch{try{model.call(request);if(request.optString("method") in listOf("sync.profile.use","sync.snapshot"))model.call(obj("method" to "sync.run"))}catch(e:Exception){error=e.message?:"同步失败"}finally{try{load();model.reload()}catch(e:Exception){if(error.isEmpty())error=e.message?:"无法读取同步配置"};busy=false}}}
+    fun inspectLegacyLock(){busy=true;error="";scope.launch{try{val preview=model.call(obj("method" to "sync.lock.inspect"));confirm=preview.getString("message") to obj("method" to "sync.lock.recover","expectedHead" to preview.getString("expectedHead"),"confirmed" to true,"otherDevicesStopped" to true)}catch(e:Exception){error=e.message?:"无法检查旧同步锁"}finally{busy=false}}}
     LaunchedEffect(Unit){try{load()}catch(e:Exception){error=e.message?:"无法读取同步配置"}}
     var oldPassword by remember{mutableStateOf("")};var newPassword by remember{mutableStateOf("")};var repeatPassword by remember{mutableStateOf("")};var currentPassword by remember{mutableStateOf("")}
     var clientsUpdated by remember{mutableStateOf(false)};var passwordRunning by remember{mutableStateOf(false)};var showProgress by remember{mutableStateOf(false)};var editCredentials by remember{mutableStateOf(false)}
@@ -66,13 +78,18 @@ import java.util.UUID
                 GroupedSection("当前同步状态"){
                     SettingRow("库 ID",value=status.optString("library"));GroupDivider();SettingRow("当前设备",value=status.optString("name"));GroupDivider()
                     Row(Modifier.fillMaxWidth().padding(16.dp),horizontalArrangement=Arrangement.SpaceBetween){Text("自动同步");Switch(status.optBoolean("auto"),{run(obj("method" to "sync.configure","confirmed" to true,"auto" to it))},enabled=!busy&&!status.optBoolean("providerUnavailable"))}
+                    SyncLeaseSettings(status.optInt("lockTimeoutMinutes",60),!busy){minutes->run(obj("method" to "sync.configure","confirmed" to true,"lockTimeoutMinutes" to minutes))}
+                    SyncHistorySettings(status.optInt("historyVersionCount",10),if(status.isNull("pendingHistoryVersionCount"))null else status.optInt("pendingHistoryVersionCount"),!busy){count->run(obj("method" to "sync.configure","confirmed" to true,"historyVersionCount" to count))}
                     SettingRow("待上传操作",value=status.optInt("pending").toString())
                     Text("上次检查：${status.optJSONObject("lastCheck")?.optString("at")?:"尚未同步"}",Modifier.padding(16.dp),style=MaterialTheme.typography.bodySmall)
                     status.optJSONObject("lastError")?.optString("message")?.takeIf{it.isNotBlank()}?.let{message->
                         Text("上次同步未完成：$message",Modifier.padding(horizontal=16.dp),color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodyMedium)
                     }
-                    Row(Modifier.padding(16.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)){Button(onClick={run(obj("method" to "sync.run"))},enabled=!busy&&!status.optBoolean("providerUnavailable")){Text("立即同步")};OutlinedButton(onClick={run(obj("method" to "sync.snapshot"))},enabled=!busy){Text("生成完整快照")}}
+                    Row(Modifier.padding(16.dp),horizontalArrangement=Arrangement.spacedBy(12.dp)){Button(onClick={run(obj("method" to "sync.run"))},enabled=!busy&&!status.optBoolean("providerUnavailable")){Text("立即同步")};OutlinedButton(onClick={inspectLegacyLock()},enabled=!busy&&!status.optBoolean("providerUnavailable")){Text("恢复旧锁并同步")}}
+                    TextButton(onClick={run(obj("method" to "sync.repair"))},enabled=!busy&&!status.optBoolean("providerUnavailable")){Text("检查并修复缺失文件")}
+                    Row(Modifier.padding(horizontal=16.dp,vertical=8.dp)){OutlinedButton(onClick={run(obj("method" to "sync.snapshot"))},enabled=!busy){Text("生成完整快照")}}
                 }
+                GroupedSection("云端历史自动清理"){SyncMaintenanceStatus(status.optJSONObject("maintenance")?:JSONObject())}
                 GroupedSection("同步 Key"){
                     if(status.optBoolean("passwordRequired"))Text("云端 Key 已更新。输入当前 Key 后，本机离线修改会继续合并。",Modifier.padding(16.dp),color=MaterialTheme.colorScheme.error)
                     OutlinedTextField(currentPassword,{currentPassword=it},Modifier.fillMaxWidth().padding(16.dp),label={Text("当前同步 Key")},placeholder={Text("请输入当前同步 Key")},singleLine=true,visualTransformation=PasswordVisualTransformation())
@@ -98,15 +115,11 @@ import java.util.UUID
                             TextButton(enabled=!busy,onClick={confirm="清理后无法再从回收站恢复；历史云端密文仍保留，不代表物理擦除。" to obj("method" to "sync.purge","scope" to item.optString("scope"),"ids" to JSONArray().put(item.optString("id")),"confirmed" to true)}){Text("清理",color=MaterialTheme.colorScheme.error)}}
                     };GroupDivider()}
                 }
-                GroupedSection("冲突"){
-                    val conflicts=status.objects("conflicts");if(conflicts.isEmpty())Text("没有待处理冲突",Modifier.padding(16.dp))
-                    conflicts.forEach{conflict->Column(Modifier.padding(16.dp)){
-                        Text(conflict.optString("id"),style=MaterialTheme.typography.titleSmall)
-                        if(conflict.optBoolean("deleted")){Text("删除与编辑并发；原记录保持删除，编辑内容已保留。");TextButton(enabled=!busy,onClick={confirm="确认保留删除，并将编辑候选归档到回收站。" to obj("method" to "sync.resolve","scope" to conflict.optString("scope"),"id" to conflict.optString("id"),"keepDeleted" to true)}){Text("确认保留删除")}}
-                        else{val candidates=conflict.optJSONObject("fields")?:JSONObject();candidates.keys().asSequence().toList().sorted().forEach{field->val values=candidates.optJSONArray(field)?:JSONArray();if(values.length()>1){Text(field);for(i in 0 until values.length()){val candidate=values.getJSONObject(i);TextButton(enabled=!busy,onClick={run(obj("method" to "sync.resolve","scope" to conflict.optString("scope"),"id" to conflict.optString("id"),"choices" to obj(field to candidate.getJSONObject("dot"))))}){Text("保留：${candidate.opt("value")}",maxLines=3)}}}}}
-                    }}
+                GroupedSection("冲突") {
+                    SyncConflicts(status.objects("conflicts"),!busy,request={model.call(it)}){message,command->confirm=message to command}
                 }
                 GroupedSection("完整快照") {
+                    TextButton(enabled=!busy,onClick={chooseVersion.launch(arrayOf("*/*"))}){Text("从 TPS 文件恢复")}
                     val snapshots=status.objects("snapshots")
                     if(snapshots.isEmpty()) Text("尚未生成快照",Modifier.padding(16.dp))
                     snapshots.forEach { snapshot ->
@@ -128,6 +141,37 @@ import java.util.UUID
             if(error.isNotEmpty())Text(error,color=MaterialTheme.colorScheme.error)
         }
     })
+    versionFile?.let { uri ->
+        AlertDialog(onDismissRequest={versionFile=null;versionKey=""},title={Text("从完整版本恢复")},text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)){
+            Text("输入创建此文件时的同步 Key。无需连接云端；先预览，再恢复已开启同步范围内的数据。")
+            OutlinedTextField(versionKey,{versionKey=it},label={Text("文件的同步 Key")},singleLine=true,visualTransformation=PasswordVisualTransformation())
+        }},dismissButton={TextButton(onClick={versionFile=null;versionKey=""}){Text("取消")}},confirmButton={TextButton(enabled=versionKey.isNotEmpty(),onClick={
+            val key=versionKey;versionKey="";versionFile=null;busy=true;error=""
+            scope.launch {
+                var temp:File?=null
+                try {
+                    val file=withContext(Dispatchers.IO){
+                        File.createTempFile("sync-version-",".tps",context.cacheDir).also { output ->
+                            temp=output
+                            context.contentResolver.openInputStream(uri).use { input ->
+                                requireNotNull(input){"无法读取文件"}
+                                output.outputStream().use { target ->
+                                    val buffer=ByteArray(65536);var total=0L
+                                    while(true){val count=input.read(buffer);if(count<0)break;total+=count;require(total<=128L*1024*1024){"完整版本超过 128 MiB"};target.write(buffer,0,count)}
+                                }
+                            }
+                        }
+                    }
+                    val imported=model.call(obj("method" to "sync.snapshot.import","path" to file.absolutePath,"passphrase" to key))
+                    val id=imported.getString("id")
+                    val preview=model.call(obj("method" to "sync.snapshot.preview","id" to id))
+                    load()
+                    confirm="恢复 ${preview.optInt("copies")} 条记录为新副本。已开启同步的偏好和 AI 设置将作为新的修改应用。" to obj("method" to "sync.snapshot.restore","id" to id,"confirmed" to true,"actionId" to UUID.randomUUID().toString())
+                } catch(e:Exception){error=e.message?:"文件不可用"}
+                finally{temp?.delete();busy=false}
+            }
+        }){Text("校验并预览")}})
+    }
     inviteEditor?.let { profile -> SyncInviteView(model,profile.optString("id").takeIf{it.isNotEmpty()},close={inviteEditor=null},saved={load();model.reload()}) }
     profileEditor?.let { profile -> SyncProfileEditor(model,metadata,profile,close={profileEditor=null},saved={load();model.reload()}) }
     if(showProgress){

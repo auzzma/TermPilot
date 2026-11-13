@@ -40,6 +40,8 @@ pub(super) fn track(
             | "sync.invite.import"
             | "sync.snapshot"
             | "sync.snapshot.restore"
+            | "sync.lock.inspect"
+            | "sync.lock.recover"
             | "sync.restore"
     ) {
         return work();
@@ -75,6 +77,8 @@ pub(super) fn track(
             | "sync.invite.import"
             | "sync.snapshot"
             | "sync.snapshot.restore"
+            | "sync.lock.inspect"
+            | "sync.lock.recover"
             | "sync.restore"
     ) {
         stage("preparing", 0, None);

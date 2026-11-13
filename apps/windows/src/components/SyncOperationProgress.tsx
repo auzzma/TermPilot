@@ -21,7 +21,7 @@ export function SyncOperationProgress({busy}:{busy:boolean}){
   const phase=value.phase||'preparing';const label=phases[phase]||'正在处理';
   return <section className="sync-operation-progress" aria-label="同步进度" role="status">
     <div><strong>{label}</strong>{value.percent!=null&&<span>{value.percent}%</span>}</div>
-    <progress max={100} value={value.percent??undefined} aria-label={`${label}进度`}/>
+    {phase!=='failed'&&<progress max={100} value={value.percent??undefined} aria-label={`${label}进度`}/>}
     {value.total!=null&&phase!=='completed'&&<small>当前阶段：{value.completed||0} / {value.total}</small>}
     <small>下载 {bytes(value.downloadedBytes)} · 上传 {bytes(value.uploadedBytes)} · 已校验 {bytes(value.verifiedBytes)}</small>
     {value.error&&<p className="backup-error">{value.error}</p>}

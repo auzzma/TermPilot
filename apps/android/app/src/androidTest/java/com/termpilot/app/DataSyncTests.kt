@@ -12,6 +12,60 @@ import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class DataSyncTests {
+    @Test fun completeVersionHistoryAndOfflineImportThroughJNI() {
+        val root=File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,"full-version-${UUID.randomUUID()}")
+        val handle=NativeBridge.create(File(root,"local").path,ByteArray(32){17})
+        try {
+            val cloud=File(root,"cloud")
+            call(handle,obj("method" to "sync.configure","provider" to obj("kind" to "folder","path" to cloud.path),"passphrase" to "full-version-fixture-key","confirmed" to true))
+            call(handle,obj("method" to "sync.configure","historyVersionCount" to 1,"confirmed" to true))
+            repeat(3){call(handle,obj("method" to "sync.snapshot"));call(handle,obj("method" to "sync.run"))}
+            val status=call(handle,obj("method" to "sync.status"))
+            assertTrue(status.getBoolean("fullVersionSync"));assertEquals(1,status.getInt("historyVersionCount"));assertEquals(2,status.objects("snapshots").size)
+            val file=cloud.walkTopDown().first{it.isFile&&it.name.startsWith("full-")&&it.parentFile?.name=="current"}
+            val standalone=file.copyTo(File(root,"single.tps"));cloud.deleteRecursively()
+            val imported=call(handle,obj("method" to "sync.snapshot.import","path" to standalone.path,"passphrase" to "full-version-fixture-key"))
+            assertTrue(call(handle,obj("method" to "sync.snapshot.preview","id" to imported.getString("id"))).getBoolean("preview"))
+        } finally {NativeBridge.destroy(handle);root.deleteRecursively()}
+    }
+
+    @Test fun conflictDetailsAndResolutionThroughJNI() {
+        val root=File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,"conflicts-${UUID.randomUUID()}")
+        val a=NativeBridge.create(File(root,"A").path,ByteArray(32){17});val b=NativeBridge.create(File(root,"B").path,ByteArray(32){29})
+        try {
+            val library=UUID.randomUUID().toString()
+            for(runtime in listOf(a,b))call(runtime,obj("method" to "sync.configure","name" to "Device $runtime","library" to library,"provider" to obj("kind" to "folder","path" to File(root,"cloud").path),"passphrase" to "conflict-fixture-passphrase","confirmed" to true))
+            call(a,obj("method" to "vault.save","collection" to "hosts","item" to obj("label" to "Development host","hostname" to "original.invalid","port" to 22,"username" to "fixture","authentication" to "password","connectionKind" to "ssh")))
+            call(a,obj("method" to "sync.run"));call(b,obj("method" to "sync.run"))
+            for((runtime,address) in listOf(a to "first.invalid",b to "second.invalid")) {
+                val host=call(runtime,obj("method" to "vault.list","collection" to "hosts")).objects("items").first().put("hostname",address)
+                call(runtime,obj("method" to "vault.save","collection" to "hosts","item" to host))
+            }
+            call(a,obj("method" to "sync.run"));call(b,obj("method" to "sync.run"));val status=call(a,obj("method" to "sync.run"))
+            val conflict=status.objects("conflicts").first();assertEquals("主机：Development host",conflict.getString("title"))
+            val field=conflict.objects("details").first{it.getString("key")=="hostname"};assertEquals("主机地址 / IP",field.getString("label"))
+            val selected=field.objects("candidates").first{it.getString("display")=="first.invalid"}
+            val result=call(a,obj("method" to "sync.resolve","scope" to "configuration","id" to conflict.getString("id"),"revision" to conflict.getString("revision"),"choices" to obj("hostname" to selected.getJSONObject("dot")),"confirmed" to true))
+            assertTrue(result.objects("conflicts").isEmpty());assertTrue(status.has("maintenance"))
+            call(a,obj("method" to "sync.run"));call(b,obj("method" to "sync.run"))
+            assertEquals("first.invalid",call(b,obj("method" to "vault.list","collection" to "hosts")).objects("items").first().getString("hostname"))
+        } finally {NativeBridge.destroy(a);NativeBridge.destroy(b);root.deleteRecursively()}
+    }
+
+    @Test fun leaseTimeoutPersistsThroughJNI() {
+        val root=File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,"lease-${UUID.randomUUID()}")
+        var handle=NativeBridge.create(File(root,"local").path,ByteArray(32){17})
+        try {
+            val initial=call(handle,obj("method" to "sync.configure","provider" to obj("kind" to "folder","path" to File(root,"cloud").path),"passphrase" to "lease-test-passphrase","confirmed" to true))
+            assertEquals(60,initial.getInt("lockTimeoutMinutes"))
+            call(handle,obj("method" to "sync.configure","lockTimeoutMinutes" to 23,"confirmed" to true))
+            val invalid=JSONObject(NativeBridge.call(handle,obj("method" to "sync.configure","lockTimeoutMinutes" to 0,"confirmed" to true).toString()))
+            assertFalse(invalid.getBoolean("ok"))
+            NativeBridge.destroy(handle);handle=NativeBridge.create(File(root,"local").path,ByteArray(32){17})
+            assertEquals(23,call(handle,obj("method" to "sync.run")).getInt("lockTimeoutMinutes"))
+        } finally {NativeBridge.destroy(handle);root.deleteRecursively()}
+    }
+
     @Test fun qrFrameAndInvalidInviteThroughJNI() {
         val root=File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,"invite-${UUID.randomUUID()}")
         val handle=NativeBridge.create(root.path,ByteArray(32){17})
@@ -128,7 +182,7 @@ class DataSyncTests {
             assertEquals("light",call(a,obj("method" to "sync.run")).getJSONObject("preferences").getString("theme"))
             listOf(a,b).forEach { assertEquals(2,call(it,obj("method" to "vault.list","collection" to "hosts")).getJSONArray("items").length()) }
             assertFalse(File(root,"A/credential.key").exists())
-            File(root,"cloud").listFiles()!!.forEach { assertFalse(it.readBytes().toString(Charsets.ISO_8859_1).contains("fixture-not-published")) }
+            File(root,"cloud").walkTopDown().filter{it.isFile}.forEach { assertFalse(it.readBytes().toString(Charsets.ISO_8859_1).contains("fixture-not-published")) }
         } finally {NativeBridge.destroy(a);NativeBridge.destroy(b);root.deleteRecursively()}
     }
     @Test fun passwordChangeKeepsOfflineChangesAcrossDeviceKeys() {

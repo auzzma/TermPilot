@@ -1,5 +1,18 @@
 //! Encrypted incremental synchronization shared by all TermPilot clients.
 mod control;
+mod bundle;
+mod legacy_lock;
+#[cfg(test)]
+mod legacy_lock_tests;
+mod maintenance;
+mod conflicts;
+#[cfg(test)]
+mod maintenance_tests;
+#[cfg(test)]
+mod conflict_tests;
+mod lease;
+#[cfg(test)]
+mod lease_tests;
 mod digest_auth;
 mod invite;
 pub mod journal;
