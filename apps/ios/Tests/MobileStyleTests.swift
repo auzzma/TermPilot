@@ -35,9 +35,18 @@ final class MobileStyleTests: XCTestCase {
     add(attachment)
   }
   @MainActor func testChatAndOverviewInBothThemes() async throws {
+    // A visual fixture must not share the host application's vault or Keychain.
+    // Keep a real engine for AI requests, with isolated disposable test data.
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "TermPilot-style-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let runtime = try MobileRuntime(directory: directory, testKey: Data(repeating: 37, count: 32))
+    defer { runtime.stop() }
     let model = AppModel()
-    await model.start()
-    defer { model.runtime?.stop() }
+    model.runtime = runtime
+    runtime.start { [weak model] packet in
+      Task { @MainActor in model?.receive(packet) }
+    }
     let session = MobileSession(
       id: 0,
       host: [
@@ -60,6 +69,9 @@ final class MobileStyleTests: XCTestCase {
         ],
       ]
     ]
+    // Fail at initialization rather than hiding an engine error behind rendering.
+    try await model.openAI(session)
+    XCTAssertNotNil(session.ai)
     let window = try XCTUnwrap(
       UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
         .first { $0.isKeyWindow })
