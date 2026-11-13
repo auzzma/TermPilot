@@ -73,7 +73,8 @@ class MacOSReleaseUpdateTests(unittest.TestCase):
                 name = args[args.index('--pattern')+1]
                 (Path(args[args.index('--dir')+1])/name).write_bytes(self.files[name])
             elif args[1] == 'upload':
-                self.assertEqual(args[3:5], ('dist/release/'+self.mac, 'dist/release/SHA256SUMS.txt'))
+                self.assertEqual(tuple(map(Path, args[3:5])),
+                                 (Path('dist/release')/self.mac, Path('dist/release/SHA256SUMS.txt')))
                 for path in map(Path, args[3:5]):
                     asset = next(a for a in release['assets'] if a['name'] == path.name)
                     asset.update(id=asset['id']+100, digest='sha256:'+self.digest(path.read_bytes()), size=path.stat().st_size)
