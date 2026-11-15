@@ -14,7 +14,7 @@ import {
   Paperclip,
   ChevronDown,
 } from "lucide-react";
-import { ai, AIValue, aiScope, aiInteractions, aiSelectionDrafts, context, terminalSelections } from "../ai";
+import { ai, AIValue, aiScope, aiInteractions, aiSelectionDrafts, context, terminalSelections, automationWarningForSession } from "../ai";
 import { useAppStore } from "../store";
 import { Markdown } from "./AIContent";
 import { AIModelPicker } from "./AIModelPicker";
@@ -38,6 +38,7 @@ export function AIPanel({
   const [pending, setPending] = useState<AIValue[]>([]);
   const [rows, setRows] = useState<AIValue[]>([]);
   const [error, setError] = useState("");
+  const [automationWarning, setAutomationWarning] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [files, setFiles] = useState<string[]>([]);
   const [skills, setSkills] = useState<AIValue[]>([]);
@@ -122,6 +123,7 @@ export function AIPanel({
   }
   useEffect(() => {
     let live = true;
+    setAutomationWarning("");
     void guard(async () => {
       const c = await ai("settings.get");
       if (!live) return;
@@ -153,6 +155,11 @@ export function AIPanel({
     });
     const off = listen<AIValue>("ai-event", ({ payload: e }) => {
       if (!live) return;
+      if (e.type === "automationError") {
+        const warning = automationWarningForSession(e, sessionId);
+        if (warning !== undefined) setAutomationWarning(warning);
+        return;
+      }
       if (e.type === "conversation") {
         if (e.conversation?.scope === scope) void histories();
         if (e.conversationId === current.current.id) {
@@ -349,6 +356,12 @@ export function AIPanel({
       {error && (
         <div className="ai-error" role="alert">
           {error}
+        </div>
+      )}
+      {automationWarning && (
+        <div className="ai-automation-warning" role="status">
+          <span>{automationWarning}</span>
+          <button aria-label="关闭" onClick={() => setAutomationWarning("")}>×</button>
         </div>
       )}
       <div

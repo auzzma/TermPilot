@@ -31,6 +31,13 @@ import org.json.JSONObject
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).testTag("ai-conversation")){
         Row(Modifier.padding(12.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.AutoAwesome,null);Box(Modifier.weight(1f)){TextButton(onClick={agents=true}){Text(model.settings.objects("providers").find{it.optString("id")==s.conversation.optString("agent")}?.optString("name")?:"TermPilot Agent")};DropdownMenu(agents,{agents=false}){model.settings.objects("providers").forEach{provider->DropdownMenuItem(text={Text(provider.optString("name"))},onClick={agents=false;model.launch{s.conversation=model.aiCall(s,"conversation.draft",obj("conversationId" to s.conversation.optString("id"),"agent" to provider.optString("id")))}})}}};IconButton(onClick={model.launch{history=model.aiCall(s,"conversation.list",obj("scope" to s.aiScope)).objects("items")}}){Icon(Icons.Outlined.History,tr("对话历史"))};IconButton(onClick={model.launch{s.conversation=model.aiCall(s,"conversation.create",obj("scope" to s.aiScope,"agent" to model.settings.optString("selected")))}}){Icon(Icons.Outlined.EditNote,tr("新对话"))};IconButton(onClick={configure=true}){Icon(Icons.Outlined.Settings,tr("AI 设置"))}}
         HorizontalDivider()
+        s.automationWarning?.let { warning ->
+            Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant).padding(10.dp),verticalAlignment=Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Warning,null,tint=MaterialTheme.colorScheme.tertiary)
+                Text(warning,Modifier.weight(1f).padding(horizontal=8.dp),style=MaterialTheme.typography.bodySmall)
+                IconButton(onClick={s.automationWarning=null}) { Icon(Icons.Outlined.Close,tr("关闭")) }
+            }
+        }
         LazyColumn(Modifier.weight(1f),state=messageList,contentPadding=PaddingValues(16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)){
             val messages=s.conversation.objects("messages")
             if(messages.isEmpty())item{Column(Modifier.fillMaxWidth().padding(vertical=48.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Outlined.AutoAwesome,null,Modifier.size(40.dp));Text(trf("与 {} 对话",s.label),Modifier.padding(16.dp),style=MaterialTheme.typography.titleLarge);Text(tr("询问服务器状态、分析终端输出或获取配置帮助"),textAlign=androidx.compose.ui.text.style.TextAlign.Center,color=MaterialTheme.colorScheme.onSurfaceVariant);if(model.settings.objects("providers").isEmpty())TextButton(onClick={configure=true}){Text(tr("配置 AI"))}}}

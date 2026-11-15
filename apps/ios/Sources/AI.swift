@@ -23,6 +23,7 @@ extension AppModel {
         "sessions": [
           [
             "sessionId": String(session.id), "hostId": session.host.text("id"),
+            "kind": session.protocolKind,
             "label": session.label, "hostname": session.host.text("hostname"),
             "username": session.host.text("username"),
             "connected": session.connected && session.protocolKind == "ssh",
@@ -138,6 +139,15 @@ struct AIView: View {
         }.accessibilityLabel(tr("AI 设置"))
       }.padding()
       Divider()
+      if let warning = session.automationWarning {
+        HStack(alignment: .top) {
+          Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+          Text(warning).font(.caption)
+          Spacer(minLength: 4)
+          Button { session.automationWarning = nil } label: { Image(systemName: "xmark") }
+            .accessibilityLabel(tr("关闭"))
+        }.padding(10).background(Color.orange.opacity(0.06))
+      }
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 14) {
           if session.conversation.array("messages").isEmpty {

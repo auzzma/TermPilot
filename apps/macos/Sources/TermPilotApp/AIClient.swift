@@ -15,6 +15,7 @@ private actor AIWriter {
 final class AIClient: ObservableObject {
     @Published var ready = false { didSet { for chat in chats.values { chat.ready = ready } } }
     @Published var error: String? { didSet { for chat in chats.values { chat.error = error } } }
+    @Published var automationWarning: String?
     @Published var settings: [String: Any] = [:] { didSet { for chat in chats.values { chat.settings = settings } } }
     @Published var presets: [[String: Any]] = [] { didSet { for chat in chats.values { chat.presets = presets } } }
     @Published var agentCatalog: [[String: Any]] = [] { didSet { for chat in chats.values { chat.agentCatalog = agentCatalog } } }
@@ -40,6 +41,12 @@ final class AIClient: ObservableObject {
     var onAttention: ((String) -> Void)?
     private weak var coordinator: AIClient?
     private var chats: [String: AIClient] = [:]
+    private var automationWarnings: [String: String] = [:]
+
+    func clearAutomationWarning() {
+        automationWarning = nil
+        if let boundScope { coordinator?.automationWarnings.removeValue(forKey: boundScope) }
+    }
 
     func schedulePresentation() {
         guard boundScope != nil, ready else { return }
@@ -84,6 +91,7 @@ final class AIClient: ObservableObject {
         chat.coordinator = self
         chat.ready = ready; chat.settings = settings; chat.presets = presets
         chat.agentCatalog = agentCatalog; chat.configuration = configuration; chat.error = error
+        chat.automationWarning = automationWarnings[key]
         chats[key] = chat
         return chat
     }
@@ -245,6 +253,11 @@ final class AIClient: ObservableObject {
                 } else { interactions.append(frame) }
             }
         case "scriptActivity", "scriptRun": if current { activity.append(String(describing: frame["run"] ?? frame["arguments"] ?? "")); if activity.count > 200 { activity.removeFirst() } }
+        case "automationError":
+            let hostID = frame["hostId"] as? String ?? ""
+            let scope = hostID.isEmpty ? frame["scope"] as? String : "host:" + hostID.lowercased()
+            if let scope, !scope.isEmpty, boundScope == scope { automationWarning = frame["message"] as? String }
+            else if let scope, !scope.isEmpty, boundScope == nil { automationWarnings[scope] = frame["message"] as? String }
         case "interactionClosed":
             let id = frame["requestId"] as? String ?? ""
             interactions.removeAll { $0["requestId"] as? String == id }
@@ -292,7 +305,7 @@ final class AIClient: ObservableObject {
         registered = Dictionary(uniqueKeysWithValues: state.runtimes.values.filter { $0.lifecycle == .connected }.map { ($0.surfaceIdentity, $0) })
         return ["sessions": registered.sorted { $0.key < $1.key }.map { id, r -> [String: Any] in
             let host = state.sessionHost(for: r.descriptor)
-            return ["sessionId": id, "label": r.title, "hostId": host?.id.uuidString ?? "", "hostname": host?.hostname ?? "", "scope": r.descriptor.id.uuidString, "cwd": r.currentDirectory ?? "", "username": r.currentUser ?? "", "kind": r.descriptor.kind.rawValue]
+            return ["sessionId": id, "label": r.title, "hostId": host?.id.uuidString ?? "", "hostname": host?.hostname ?? "", "scope": r.descriptor.id.uuidString, "cwd": r.currentDirectory ?? "", "username": r.currentUser ?? "", "kind": r.descriptor.kind.rawValue, "connected": true]
         }]
     }
     func updateContext() async {

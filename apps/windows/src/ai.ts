@@ -12,6 +12,10 @@ export const aiScope = (sessionId: string) => {
   return s?.hostId ? `host:${s.hostId.toLowerCase()}` : sessionId;
 };
 export const aiInteractions = new Map<string, AIValue>();
+export function automationWarningForSession(event: AIValue, sessionId: string): string | undefined {
+  return event.type === "automationError" && event.sessionId === sessionId
+    && typeof event.message === "string" ? event.message : undefined;
+}
 
 export function context() {
   const state = useAppStore.getState();
@@ -26,6 +30,7 @@ export function context() {
           sessionId: s.id,
           scope: aiScope(s.id),
           kind: "ssh",
+          connected: true,
           label: s.title,
           hostId: s.hostId,
           hostname: h?.hostname,

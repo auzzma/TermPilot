@@ -17,6 +17,7 @@ import UIKit
   @Published var conversations: [JSON] = []
   @Published var conversation: JSON = [:]
   @Published var partial = ""
+  @Published var automationWarning: String?
   @Published var performance: JSON = [:]
   @Published var renderedFPS = 0.0
   var videoDiagnostics = RemoteVideoDiagnostics()
@@ -559,6 +560,8 @@ struct Interaction: Identifiable {
       session.conversation = event.object("conversation")
       session.partial = ""
     case "delta": session.partial += event.text("text")
+    case "automationError":
+      if event.text("sessionId") == String(session.id) { session.automationWarning = event.text("message") }
     case "toolRequest": attempt { try await self.aiTool(session, event: event) }
     case "error": error = event.text("message", event.text("code", "连接失败"))
     case "sessionEnded", "disconnected", "exit":

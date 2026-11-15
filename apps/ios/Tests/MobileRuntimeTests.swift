@@ -7,6 +7,27 @@ import XCTest
 ) -> Int32
 
 final class MobileRuntimeTests: XCTestCase {
+  @MainActor
+  func testAutomationWarningIsSessionScopedAndDoesNotBlockChatOrConnection() {
+    let model = AppModel()
+    let session = MobileSession(id: 42, host: ["id": UUID().uuidString, "label": "Fixture"], kind: "ssh", terminal: "fixture")
+    let other = MobileSession(id: 43, host: ["id": UUID().uuidString, "label": "Other"], kind: "ssh", terminal: "other")
+    session.ai = 100
+    session.connected = true
+    model.sessions = [session, other]
+    model.receive(MobilePacket(header: ["session": 100, "type": "automationError", "sessionId": "42", "message": "Fixture queue failure"], data: Data()))
+    XCTAssertEqual(session.automationWarning, "Fixture queue failure")
+    XCTAssertNil(other.automationWarning)
+    XCTAssertNil(model.error)
+    XCTAssertTrue(session.connected)
+    model.receive(MobilePacket(header: ["session": 100, "type": "automationError", "sessionId": "43", "message": "Wrong target"], data: Data()))
+    XCTAssertEqual(session.automationWarning, "Fixture queue failure")
+    model.receive(MobilePacket(header: ["session": 100, "type": "delta", "text": "still chatting"], data: Data()))
+    XCTAssertEqual(session.partial, "still chatting")
+    session.automationWarning = nil
+    XCTAssertNil(session.automationWarning)
+  }
+
   func testNativeHEVC444AndAACELDSBR() throws {
     let path = try XCTUnwrap(
       Bundle(for: Self.self).url(forResource: "eld-sbr", withExtension: "fixture"))

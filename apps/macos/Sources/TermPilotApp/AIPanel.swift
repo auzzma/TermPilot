@@ -33,6 +33,15 @@ struct AIPanel: View {
             header.padding(.horizontal, 12).padding(.vertical, 10)
             Divider()
             transcript
+            if let warning = client.automationWarning {
+                HStack(alignment: .top) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    Text(warning).font(.caption).textSelection(.enabled)
+                    Spacer(minLength: 4)
+                    Button { client.clearAutomationWarning() } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).accessibilityLabel("关闭")
+                }.padding(10).background(Color.orange.opacity(0.06))
+            }
             if let error = client.error {
                 HStack(alignment: .top) {
                     Image(systemName: "exclamationmark.circle").foregroundStyle(.red)

@@ -36,6 +36,10 @@ class Session(val id:Long,val host:JSONObject,val protocol:String,val terminal:S
     val audio=RemoteAudio()
     var ai:Long? = null
     var conversation by mutableStateOf(JSONObject())
+    var automationWarning by mutableStateOf<String?>(null)
+    internal fun receiveAutomationWarning(event:JSONObject) {
+        if(event.optString("sessionId")==id.toString())automationWarning=event.optString("message")
+    }
     var partial by mutableStateOf("")
     var stats by mutableStateOf(JSONObject())
     var renderedFPS by mutableDoubleStateOf(0.0)
@@ -217,6 +221,7 @@ class AppModel(app:Application):AndroidViewModel(app) {
             "mediaDiagnostics"->s.mediaDiagnostics=e
             "conversation"->{s.conversation=e.getJSONObject("conversation");s.partial=""}
             "delta"->s.partial+=e.optString("text")
+            "automationError"->s.receiveAutomationWarning(e)
             "toolRequest"->launch{aiTool(s,e)}
             "fileTransfer"->{noteRemoteTransfer(s,e);val tid=e.optString("id",e.optString("requestID"));s.transfers[tid]=obj("id" to tid,"name" to e.optString("name","文件"),"status" to e.optString("stage"),"transferred" to e.optLong("completedBytes"),"total" to e.optLong("totalBytes"),"rate" to if(e.optString("stage")=="transferring")s.transferRate(tid,e.optLong("completedBytes"))else 0);if(e.optString("stage")=="completed")s.remoteDownloads.remove(tid)?.let{s.downloads.add(it)}}
             "remoteDrag"->{val paths=e.optJSONArray("paths")?:JSONArray();s.remoteFiles=(0 until paths.length()).map{paths.getString(it)}}
@@ -240,7 +245,7 @@ class AppModel(app:Application):AndroidViewModel(app) {
     }
     suspend fun aiCall(s:Session,method:String,params:JSONObject=JSONObject()):JSONObject{val id=UUID.randomUUID().toString();return request(checkNotNull(s.ai),obj("id" to id,"method" to method,"params" to params),id)}
     suspend fun openAI(s:Session){
-        if(s.ai==null){val context=obj("sessions" to JSONArray().put(obj("sessionId" to s.id.toString(),"hostId" to s.host.optString("id"),"label" to s.label,"hostname" to s.host.optString("hostname"),"username" to s.host.optString("username"),"connected" to (s.connected&&s.protocol=="ssh"),"scope" to s.aiScope)))
+        if(s.ai==null){val context=obj("sessions" to JSONArray().put(obj("sessionId" to s.id.toString(),"hostId" to s.host.optString("id"),"kind" to s.protocol,"label" to s.label,"hostname" to s.host.optString("hostname"),"username" to s.host.optString("username"),"connected" to (s.connected&&s.protocol=="ssh"),"scope" to s.aiScope)))
             s.ai=call(obj("method" to "session.open","protocol" to "ai","command" to obj("id" to "init","method" to "initialize","params" to obj("context" to context,"tools" to JSONArray(listOf("terminal_write","terminal_read_context","terminal_execute","terminal_start","terminal_poll","terminal_stop")))))).getLong("session")}
         settings=aiCall(s,"settings.get").optJSONObject("settings")?:JSONObject()
         if(s.protocol=="settings")return

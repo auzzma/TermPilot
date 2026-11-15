@@ -8,8 +8,8 @@ android {
         targetSdk = 36
         providers.gradleProperty("termpilotAbi").orNull?.let { ndk.abiFilters += it }
         // Increase for each Android release; versionName remains the public version.
-        versionCode = 23
-        versionName = "0.2.1"
+        versionCode = 24
+        versionName = "0.2.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true }

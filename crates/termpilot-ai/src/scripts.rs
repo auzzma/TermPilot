@@ -757,10 +757,20 @@ async fn host(
 // Resolve targets from current vault data so moving a host between groups takes
 // effect without copying inherited group membership into host-specific queues.
 fn target_host(vault: &termpilot_core::vault::Vault, id: &str) -> Result<(Value, String)> {
-    let host = vault
+    find_target_host(vault, id)?.context("Host not found")
+}
+fn find_target_host(
+    vault: &termpilot_core::vault::Vault,
+    id: &str,
+) -> Result<Option<(Value, String)>> {
+    let Some(host) = vault
         .get("hosts", &json!(id))
         .map_err(|e| anyhow::anyhow!(e.message))?
-        .context("Host not found")?;
+    else {
+        // Local/quick-connect sessions and hosts deleted after connecting have
+        // no saved automation target. This is not a vault or network failure.
+        return Ok(None);
+    };
     let groups = vault
         .list("groups")
         .map_err(|e| anyhow::anyhow!(e.message))?;
@@ -779,7 +789,15 @@ fn target_host(vault: &termpilot_core::vault::Vault, id: &str) -> Result<(Value,
         parent = group["parentGroupID"].clone();
     }
     parts.reverse();
-    Ok((host, parts.join("/")))
+    Ok(Some((host, parts.join("/"))))
+}
+fn automatic_host_id(session: &Value) -> Option<&str> {
+    let host = text(session, "hostId");
+    // Older adapters omit kind/connected and only send connected SSH sessions.
+    (!host.is_empty()
+        && matches!(text(session, "kind"), "" | "ssh")
+        && session["connected"] != false)
+        .then_some(host)
 }
 fn targets(record: &Value, host: &str, group: &str) -> bool {
     record["targetsAllHosts"] == true
@@ -799,6 +817,14 @@ pub async fn resolved_queue(rt: &Runtime, host: &str) -> Result<Vec<Value>> {
     let store = rt.store.lock().await;
     let (_, group) = target_host(&store.vault()?, host)?;
     let records = store.list::<Value>("automation")?;
+    connection_queue(&store, host, &group, records)
+}
+fn connection_queue(
+    store: &crate::store::Store,
+    host: &str,
+    group: &str,
+    records: Vec<Value>,
+) -> Result<Vec<Value>> {
     let manual: Vec<String> = store.get("scriptQueues", host)?.unwrap_or_default();
     let valid: Vec<_> = records
         .into_iter()
@@ -808,7 +834,7 @@ pub async fn resolved_queue(rt: &Runtime, host: &str) -> Result<Vec<Value>> {
     for all_hosts in [true, false] {
         for record in &valid {
             if (record["targetsAllHosts"] == true) == all_hosts
-                && targets(record, host, &group)
+                && targets(record, host, group)
                 && !result.iter().any(|r| r["id"] == record["id"])
             {
                 result.push(record.clone());
@@ -843,6 +869,46 @@ pub async fn resolved_queue(rt: &Runtime, host: &str) -> Result<Vec<Value>> {
     }
     Ok(result)
 }
+async fn automatic_connection_queue(rt: &Runtime, session: &Value) -> Result<Vec<Value>> {
+    let Some(host) = automatic_host_id(session) else {
+        return Ok(vec![]);
+    };
+    let store = rt.store.lock().await;
+    let records: Vec<Value> = store
+        .list::<Value>("automation")?
+        .into_iter()
+        .filter(|r| r["kind"] == "script" && r["trigger"] == "onConnect")
+        .collect();
+    if records.is_empty() {
+        return Ok(vec![]);
+    }
+    let Some((_, group)) = find_target_host(&store.vault()?, host)? else {
+        return Ok(vec![]);
+    };
+    connection_queue(&store, host, &group, records)
+}
+async fn report_automation_error(
+    rt: &Runtime,
+    session: &Value,
+    stage: &str,
+    error: &anyhow::Error,
+) {
+    let label = match stage {
+        "onConnect" => "连接脚本队列",
+        "onOutput" => "输出脚本触发器",
+        _ => "自动脚本",
+    };
+    let _ = rt
+        .emit(
+            json!({
+                "type":"automationError", "sessionId":text(session,"sessionId"),
+                "hostId":text(session,"hostId"), "scope":text(session,"scope"),
+                "stage":stage, "message":format!("{label}：{error}")
+            }),
+            "",
+        )
+        .await;
+}
 impl Scheduler {
     pub async fn schedule_output(rt: &Arc<Runtime>, session: &str) {
         if !rt
@@ -858,7 +924,11 @@ impl Scheduler {
         let session = session.to_owned();
         tokio::spawn(async move {
             tokio::select! { _=runtime.lifetime.cancelled()=>{},_=tokio::time::sleep(Duration::from_millis(100))=>{
-                if let Err(error)=Scheduler::output_triggers(&runtime,&session).await {let _=runtime.emit(json!({"type":"error","message":format!("输出脚本触发器：{error}")}),"").await;}
+                if let Err(error)=Scheduler::output_triggers(&runtime,&session).await {
+                    let metadata = runtime.context.lock().await["sessions"].as_array()
+                        .and_then(|sessions| sessions.iter().find(|s| s["sessionId"] == session)).cloned();
+                    if let Some(metadata) = metadata { report_automation_error(&runtime, &metadata, "onOutput", &error).await; }
+                }
             }}
             runtime.scripts.output_pending.lock().await.remove(&session);
         });
@@ -886,14 +956,19 @@ impl Scheduler {
             .await
             .retain(|id, _| ids.contains(id));
         for session in sessions {
-            if old.iter().any(|s| s["sessionId"] == session["sessionId"])
-                || text(&session, "hostId").is_empty()
+            if automatic_host_id(&session).is_none()
+                || old.iter().any(|s| {
+                    s["sessionId"] == session["sessionId"]
+                        && automatic_host_id(s)
+                            .zip(automatic_host_id(&session))
+                            .is_some_and(|(old, new)| old.eq_ignore_ascii_case(new))
+                })
             {
                 continue;
             }
             let runtime = rt.clone();
             tokio::spawn(async move {
-                match resolved_queue(&runtime, text(&session, "hostId")).await {
+                match automatic_connection_queue(&runtime, &session).await {
                     Ok(records) => {
                         for record in records {
                             Scheduler::enqueue(
@@ -905,12 +980,7 @@ impl Scheduler {
                         }
                     }
                     Err(e) => {
-                        let _ = runtime
-                            .emit(
-                                json!({"type":"error","message":format!("连接脚本队列：{e}")}),
-                                "",
-                            )
-                            .await;
+                        report_automation_error(&runtime, &session, "onConnect", &e).await;
                     }
                 }
             });
@@ -924,22 +994,24 @@ impl Scheduler {
         else {
             return Ok(());
         };
-        let host = text(metadata, "hostId");
-        if host.is_empty() {
+        let Some(host) = automatic_host_id(metadata) else {
             return Ok(());
-        }
-        let (records, vault) = {
-            let store = rt.store.lock().await;
-            (store.list::<Value>("automation")?, store.vault()?)
         };
-        let records: Vec<_> = records
-            .into_iter()
-            .filter(|r| r["kind"] == "script" && r["trigger"] == "onOutput")
-            .collect();
-        if records.is_empty() {
-            return Ok(());
-        }
-        let (_, group) = target_host(&vault, host)?;
+        let (records, group) = {
+            let store = rt.store.lock().await;
+            let records: Vec<_> = store
+                .list::<Value>("automation")?
+                .into_iter()
+                .filter(|r| r["kind"] == "script" && r["trigger"] == "onOutput")
+                .collect();
+            if records.is_empty() {
+                return Ok(());
+            }
+            let Some((_, group)) = find_target_host(&store.vault()?, host)? else {
+                return Ok(());
+            };
+            (records, group)
+        };
         let end = rt.scripts.position(session).await;
         let snapshot = rt.scripts.output(session, end.saturating_sub(16384)).await;
         let buffer = text(&snapshot, "text");
@@ -975,7 +1047,21 @@ impl Scheduler {
         }
         if times.len() >= 16 {
             drop(recent);
-            let _=rt.emit(json!({"type":"error","message":"自动脚本已达到每个终端每分钟 16 次触发限制，请检查脚本是否重复触发自身。"}),"").await;
+            let metadata = rt.context.lock().await["sessions"]
+                .as_array()
+                .and_then(|sessions| sessions.iter().find(|s| s["sessionId"] == session))
+                .cloned();
+            if let Some(metadata) = metadata {
+                report_automation_error(
+                    rt,
+                    &metadata,
+                    "rateLimit",
+                    &anyhow::anyhow!(
+                        "已达到每个终端每分钟 16 次触发限制，请检查脚本是否重复触发自身。"
+                    ),
+                )
+                .await;
+            }
             return;
         }
         times.push_back(std::time::Instant::now());
@@ -1023,14 +1109,18 @@ impl Scheduler {
                 )
                 .await;
                 if let Err(error) = result {
-                    let _ = runtime
-                        .emit(
-                            json!({"type":"error","message":format!("自动脚本：{error}")}),
-                            &conversation.id,
-                        )
-                        .await;
+                    let metadata = runtime.context.lock().await["sessions"]
+                        .as_array()
+                        .and_then(|sessions| sessions.iter().find(|s| s["sessionId"] == session))
+                        .cloned();
+                    if let Some(metadata) = metadata {
+                        report_automation_error(&runtime, &metadata, "run", &error).await;
+                    }
                 }
             }
         });
     }
 }
+
+#[cfg(test)]
+mod tests;
