@@ -16,7 +16,7 @@ pub struct Screens(Mutex<HashMap<String, Arc<Screen>>>);
 struct Screen {
     original: Host,
     saved_host: bool,
-    high_performance: bool,
+    supports_login: bool,
     ready: Arc<AtomicBool>,
     login: Arc<crate::screen_login::LoginInput>,
     child: Mutex<Child>,
@@ -192,7 +192,7 @@ fn start_screen(app: AppHandle, owner: String, vault: Arc<VaultStore>, session_i
     let live = Arc::new(AtomicBool::new(true));
     let ready = Arc::new(AtomicBool::new(false));
     let login = Arc::new(crate::screen_login::LoginInput::default());
-    let latest = Arc::new(Mutex::new(BTreeMap::new()));
+    let latest = Arc::new(Mutex::new(BTreeMap::<u32, Vec<u8>>::new()));
     let audio = Arc::new(Mutex::new(VecDeque::new()));
     let audio_frames = audio.clone();
     let frames = latest.clone();
@@ -205,7 +205,7 @@ fn start_screen(app: AppHandle, owner: String, vault: Arc<VaultStore>, session_i
         Arc::new(Screen {
             original: host,
             saved_host,
-            high_performance: connection["protocol"] == "highPerformance",
+            supports_login: connection["protocol"] != "rdp",
             ready: ready.clone(),
             login: login.clone(),
             child: Mutex::new(child),
@@ -246,7 +246,17 @@ fn start_screen(app: AppHandle, owner: String, vault: Arc<VaultStore>, session_i
                     if tile >= 16 {
                         return Err("Invalid screen tile".into());
                     }
-                    frames.lock().insert(tile as u32, frame);
+                    let mut pending = frames.lock();
+                    if h["rawGeneration"].is_u64() {
+                        // Frames are delivered in stream order; a new layout replaces queued old bands.
+                        pending.retain(|_, bytes| {
+                            let n = u32::from_be_bytes(bytes[..4].try_into().unwrap()) as usize;
+                            serde_json::from_slice::<Value>(&bytes[4..4+n]).ok()
+                                .is_some_and(|old| old["rawGeneration"] == h["rawGeneration"])
+                        });
+                    }
+                    pending.insert(tile as u32, frame);
+                    drop(pending);
                     if !ready.swap(true, Ordering::AcqRel) && live.load(Ordering::Acquire) {
                         let _ = app.emit_to(&owner, "screen-event",
                             json!({"sessionId":session_id,"attemptId":attempt_id,"kind":"firstFrame"}));
@@ -377,8 +387,8 @@ pub async fn screen_enter_login_password(
     session_id: String, attempt_id: String, request_id: String,
 ) -> Result<String, String> {
     let screen = login_screen(&screens, window.label(), &session_id, &attempt_id)?;
-    if !screen.high_performance || !screen.ready.load(Ordering::Acquire) || !screen.live.load(Ordering::Acquire) {
-        return Err("高性能屏幕共享尚未就绪。".into());
+    if !screen.supports_login || !screen.ready.load(Ordering::Acquire) || !screen.live.load(Ordering::Acquire) {
+        return Err("屏幕共享尚未就绪。".into());
     }
     let foreground = foreground_check(&window.as_ref().window());
     if !foreground() { return Err(crate::screen_login::CANCELLED.into()); }

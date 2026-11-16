@@ -69,6 +69,8 @@ public final class ScreenSharingMetalView: MTKView, MTKViewDelegate, NSDraggingS
     private var tiles: [Int: (ScreenSharingMessage, [any MTLTexture])] = [:]
     private var lastMailbox: ScreenSharingMailbox?
     private var hasUnpresentedFrame = false
+    private var pendingRender: (any MTLCommandBuffer)?
+    private var rawGeneration: Int?
     private var markedInput = NSAttributedString(string: "")
     private var inputSelection = NSRange(location: 0, length: 0)
     private var keyboard = ScreenSharingKeyboardState()
@@ -112,11 +114,19 @@ public final class ScreenSharingMetalView: MTKView, MTKViewDelegate, NSDraggingS
 
     public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
     public func draw(in view: MTKView) {
+        // Shared textures may only be overwritten after the preceding GPU submission finishes.
+        if let pendingRender, pendingRender.status != .completed && pendingRender.status != .error { return }
+        pendingRender = nil
         if lastMailbox !== runtime.mailbox {
-            tiles.removeAll(); lastMailbox = runtime.mailbox; hasUnpresentedFrame = false
+            tiles.removeAll(); rawGeneration = nil; lastMailbox = runtime.mailbox; hasUnpresentedFrame = false
+            runtime.mailbox.replayFrames()
         }
         runtime.playAudio()
         for frame in runtime.mailbox.takeFrames() {
+            if let generation = frame.header.rawGeneration {
+                if let previous = rawGeneration, generation < previous { continue }
+                if generation != rawGeneration { tiles.removeAll(); rawGeneration = generation }
+            }
             if let textures = textures(for: frame) {
                 tiles[frame.header.tile!] = (frame.header, textures)
                 hasUnpresentedFrame = true
@@ -126,11 +136,13 @@ public final class ScreenSharingMetalView: MTKView, MTKViewDelegate, NSDraggingS
               let drawable = currentDrawable, let buffer = commandQueue?.makeCommandBuffer(),
               let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.setRenderPipelineState(renderPipeline)
-        let desktop = runtime.desktopSize
+        let rawHeader = tiles.values.first?.0
+        let desktop = rawHeader?.rawGeneration != nil
+            ? CGSize(width: rawHeader!.desktopWidth!, height: rawHeader!.desktopHeight!) : runtime.desktopSize
         let rect = ScreenSharingGeometry.contentRect(in: CGRect(origin: .zero, size: drawableSize), remoteSize: desktop)
         for index in tiles.keys.sorted() {
             let (header, textures) = tiles[index]!
-            let top = index * header.height!
+            let top = header.originY ?? index * header.height!
             guard Double(top) < desktop.height else { continue }
             encoder.setViewport(MTLViewport(originX: rect.minX,
                                             originY: rect.minY + Double(top) / desktop.height * rect.height,
@@ -144,7 +156,7 @@ public final class ScreenSharingMetalView: MTKView, MTKViewDelegate, NSDraggingS
             encoder.setFragmentBytes(&mode, length: 4, index: 0)
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
-        encoder.endEncoding(); buffer.present(drawable); buffer.commit()
+        encoder.endEncoding(); buffer.present(drawable); pendingRender = buffer; buffer.commit()
         if hasUnpresentedFrame {
             runtime.recordPresentedFrame()
             hasUnpresentedFrame = false
@@ -158,7 +170,9 @@ public final class ScreenSharingMetalView: MTKView, MTKViewDelegate, NSDraggingS
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm,
                 width: h.width!, height: h.height!, mipmapped: false)
             descriptor.storageMode = .shared
-            guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+            let old = tiles[h.tile!]?.1.first
+            guard let texture = old.flatMap({ $0.width == h.width! && $0.height == h.height! && $0.pixelFormat == .bgra8Unorm ? $0 : nil })
+                ?? device.makeTexture(descriptor: descriptor) else { return nil }
             frame.data.withUnsafeBytes { bytes in
                 texture.replace(region: MTLRegionMake2D(0, 0, h.width!, h.height!), mipmapLevel: 0,
                     withBytes: bytes.baseAddress!, bytesPerRow: h.yStride!)

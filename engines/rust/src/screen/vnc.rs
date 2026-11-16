@@ -1,7 +1,7 @@
 //! Existing standard RFB feature set, shared by macOS and Windows.
 use super::{
     apple,
-    keyboard::KeyPacer,
+    keyboard::{KeyPacer, valid_credential_key},
     pixels::{classic, Frame},
     Counted, Output, Traffic,
 };
@@ -148,10 +148,10 @@ pub async fn run(
         let frame = Frame::new(w as usize, h as usize)?;
         stream
             .write_all(&[
-                0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0, 2, 0, 0, 5,
+                0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0, 2, 0, 0, 6,
             ])
             .await?;
-        for encoding in [6i32, 1, 0, -223, -224] {
+        for encoding in [6i32, 1, 0, -223, -224, -308] {
             stream.write_all(&encoding.to_be_bytes()).await?;
         }
         stream.write_all(&request(w, h, false)).await?;
@@ -172,6 +172,8 @@ pub async fn run(
     ));
     let clipboard = Arc::new(StdMutex::new(None::<String>));
     let enabled = Arc::new(AtomicBool::new(false));
+    let desktop = Arc::new(StdMutex::new(super::vnc_desktop::Desktop::default()));
+    let reader_desktop = desktop.clone();
     let (read, write) = tokio::io::split(stream);
     let write = Arc::new(Mutex::new(write));
     let (reader_output, reader_write, reader_dimensions, reader_clipboard, reader_enabled) = (
@@ -183,6 +185,7 @@ pub async fn run(
     );
     let mut reader = tokio::spawn(async move {
         let mut read = read;
+        let mut generation = 1u64;
         loop {
             // Waiting for a new update is unbounded. Once a message starts,
             // its body must complete within a bounded deadline.
@@ -190,12 +193,28 @@ pub async fn run(
             tokio::time::timeout(Duration::from_secs(15),async {
                 match kind {
                     0=>{
-                        read.read_u8().await?;let count=read.read_u16().await?;ensure!(count<=4096||count==65535,"vncInvalidData");let mut changed=false;
+                        read.read_u8().await?;let count=read.read_u16().await?;ensure!(count<=4096||count==65535,"vncInvalidData");let mut changed=false;let mut resized=false;let mut extended=false;
+                        // One update ahead: overlap the next request's RTT with receipt/decode.
+                        // Never use a timer to accumulate requests while the desktop is idle.
+                        send(&reader_write,&request(frame.width as u16,frame.height as u16,true)).await?;
                         for index in 0..count {
                             ensure!(index<4096,"vncInvalidData");let x=read.read_u16().await?as usize;let y=read.read_u16().await?as usize;let w=read.read_u16().await?as usize;let h=read.read_u16().await?as usize;let encoding=read.read_i32().await?;
                             if encoding==-224{break;}
+                            if encoding==-308 {
+                                let n=read.read_u8().await? as usize;bytes(&mut read,3).await?;
+                                let screens=bytes(&mut read,n*16).await?;
+                                let events=reader_desktop.lock().unwrap().update(x,y,w,h,&screens)?;
+                                for event in events { reader_output.emit(event,Vec::new()).await?; }
+                                if x==1 && y!=0 { continue; }
+                                if (w,h)!=(frame.width,frame.height) {
+                                    frame.resize(w,h)?;generation+=1;changed=true;resized=true;extended=true;
+                                    reader_dimensions.store(((w as u64)<<32)|h as u64,Ordering::Relaxed);
+                                    reader_output.emit(json!({"kind":"desktopSize","width":w,"height":h}),Vec::new()).await?;
+                                }
+                                continue;
+                            }
                             if encoding==-223{
-                                frame=Frame::new(w,h)?;reader_dimensions.store(((w as u64)<<32)|h as u64,Ordering::Relaxed);
+                                frame.resize(w,h)?;generation+=1;resized=true;reader_dimensions.store(((w as u64)<<32)|h as u64,Ordering::Relaxed);
                                 reader_output.emit(json!({"kind":"desktopSize","width":w,"height":h}),Vec::new()).await?;changed=true;continue;
                             }
                             frame.bounds(x,y,w,h)?;
@@ -206,8 +225,17 @@ pub async fn run(
                                 _=>bail!("vncEncodingUnsupported")
                             }changed=true;
                         }
-                        if changed {reader_output.frame(json!({"kind":"frame","tile":0,"width":frame.width,"height":frame.height,"pixelFormat":"bgrx","yStride":frame.width*4}),frame.pixels.clone());}
-                        send(&reader_write,&request(frame.width as u16,frame.height as u16,true)).await?;
+                        if changed {
+                            for (tile,y,h,pixels) in frame.take_bands() {
+                                reader_output.frame(json!({"kind":"frame","tile":tile,"width":frame.width,"height":h,
+                                    "pixelFormat":"bgrx","yStride":frame.width*4,"originY":y,
+                                    "desktopWidth":frame.width,"desktopHeight":frame.height,"rawGeneration":generation}),pixels);
+                            }
+                        }
+                        // The pipelined request used the old bounds; request the entire new desktop.
+                        // ExtendedDesktopSize must not trigger a non-incremental request:
+                        // compliant servers answer every such request with another layout.
+                        if resized {send(&reader_write,&request(frame.width as u16,frame.height as u16,extended)).await?;}
                     }
                     2=>{},
                     3=>{
@@ -230,6 +258,20 @@ pub async fn run(
         command=commands.recv()=>{
             let Some(command)=command else{break;};let size=dimensions.load(Ordering::Relaxed);let(w,h)=((size>>32)as u16,size as u16);
             match text(&command,"kind"){
+                "credentialKey"=>{
+                    let request=text(&command,"requestID");let key=number(&command,"key",0);
+                    ensure!(uuid::Uuid::parse_str(request).is_ok() && key<=u32::MAX as u64 && valid_credential_key(key as u32),"invalidCredentialInput");
+                    keys.insert(key as u32);
+                    send_key(&write,&mut key_pacer,key as u32,true).await?;
+                    send_key(&write,&mut key_pacer,key as u32,false).await?;
+                    keys.remove(&(key as u32));
+                    output.emit(json!({"kind":"credentialKeySent","requestID":request}),Vec::new()).await?;
+                }
+                "resize"=>{
+                    let id=text(&command,"requestID");
+                    let result=desktop.lock().unwrap().request(id,number(&command,"width",0),number(&command,"height",0));
+                    match result { Ok(message)=>send(&write,&message).await?,Err(code)=>output.emit(json!({"kind":"vncResizeResult","requestID":id,"accepted":false,"code":code}),Vec::new()).await? }
+                }
                 "key"=>{let key=number(&command,"key",0);if !(1..=0x11ffffff).contains(&key){continue;}let down=command["down"].as_bool()==Some(true);if down{keys.insert(key as u32);}else{keys.remove(&(key as u32));}send_key(&write,&mut key_pacer,key as u32,down).await?;}
                 "pointer"=>{let x=command["x"].as_i64().unwrap_or(0).clamp(0,w as i64-1)as u16;let y=command["y"].as_i64().unwrap_or(0).clamp(0,h as i64-1)as u16;let b=number(&command,"buttons",0)as u8&7;let b=(b&1)|((b&2)<<1)|((b&4)>>1);position=(x,y,b);send(&write,&pointer(x,y,b)).await?;}
                 "scroll"=>{let dy=command["dy"].as_i64().unwrap_or(0).clamp(-10,10);for _ in 0..dy.abs(){let(x,y,b)=position;send(&write,&[pointer(x,y,b|if dy<0{8}else{16}),pointer(x,y,b)].concat()).await?;}}

@@ -5,6 +5,7 @@ pub mod hp;
 mod keyboard;
 pub mod pixels;
 pub mod vnc;
+mod vnc_desktop;
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use std::{
@@ -46,10 +47,12 @@ impl Output {
     }
     pub fn frame(&self, header: Value, payload: Vec<u8>) {
         if let Some(tile) = header["tile"].as_u64().filter(|tile| *tile < 16) {
-            self.video
-                .lock()
-                .unwrap()
-                .insert(tile, Packet { header, payload });
+            let mut video = self.video.lock().unwrap();
+            if header["rawGeneration"].is_u64() && video.values().any(|old|
+                old.header["rawGeneration"] != header["rawGeneration"]) {
+                video.clear();
+            }
+            video.insert(tile, Packet { header, payload });
         }
     }
     pub fn audio(&self, payload: Vec<u8>) {

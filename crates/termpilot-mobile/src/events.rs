@@ -55,6 +55,11 @@ impl Events {
             if q.closed {
                 return;
             }
+            if packet.header["rawGeneration"].is_u64() {
+                let generation = &packet.header["rawGeneration"];
+                q.pictures.retain(|(session, _), old| *session != key.0 || old.header["rawGeneration"] == *generation);
+                q.picture_bytes = q.pictures.values().map(|p| p.payload.len()).sum();
+            }
             if let Some(old) = q.pictures.remove(&key) {
                 q.picture_bytes -= old.payload.len();
             }
@@ -148,5 +153,15 @@ mod tests {
         let h: Value = serde_json::from_slice(&data[4..4 + n]).unwrap();
         assert_eq!(h["payloadLength"], 3);
         assert_eq!(&data[4 + n..], &[0, 255, 1]);
+    }
+    #[tokio::test]
+    async fn resized_raw_bands_remove_old_layout_without_discarding_other_sessions() {
+        let queue = Events::new();
+        for (session, generation, tile) in [(1,1,0),(1,1,15),(2,1,5),(1,2,0),(1,2,1)] {
+            queue.push(Packet { header:json!({"kind":"frame","session":session,"rawGeneration":generation,"tile":tile}),payload:vec![generation as u8] }).await;
+        }
+        let a=queue.poll(Duration::ZERO).unwrap();let b=queue.poll(Duration::ZERO).unwrap();let c=queue.poll(Duration::ZERO).unwrap();
+        assert_eq!(a.header["rawGeneration"],2);assert_eq!(b.header["rawGeneration"],2);
+        assert_eq!(c.header["session"],2);assert!(queue.poll(Duration::ZERO).is_none());
     }
 }

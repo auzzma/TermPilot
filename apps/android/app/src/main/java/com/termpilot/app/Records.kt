@@ -58,7 +58,7 @@ import java.util.UUID
                 GroupedSection("网络"){
                     Choice(tr("代理"),value.optString("proxyProfileID"),listOf("" to tr("直连"))+(model.records["proxies"]?:emptyList()).map{it.optString("id") to it.optString("label")}){change("proxyProfileID",it);if(it.isNotBlank()&&value.optString("mode")=="highPerformance")change("mode","standardVNC")}
                 }
-                if(value.optString("connectionKind")=="screenSharing")GroupedSection("显示",footer="高性能使用局域网直连、1080p SDR 单虚拟屏。实际设备的媒体解码能力仍需验收。"){
+                if(value.optString("connectionKind")=="screenSharing")GroupedSection("显示",footer="高性能使用局域网直连，默认 1080p SDR，连接后可调整分辨率。"){
                     Choice(tr("模式"),value.optString("mode","standardVNC"),listOf("standardVNC" to tr("普通 VNC"))+if(value.optString("proxyProfileID").isBlank())listOf("highPerformance" to tr("Apple 高性能"))else emptyList()){change("mode",it)}
                 }
             }

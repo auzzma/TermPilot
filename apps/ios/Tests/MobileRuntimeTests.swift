@@ -8,6 +8,29 @@ import XCTest
 
 final class MobileRuntimeTests: XCTestCase {
   @MainActor
+  func testRawBandsKeepUnchangedPixelsAndResetOnResize() {
+    func band(_ tile: Int, _ generation: Int, _ byte: UInt8, desktop: Int = 130) -> MobilePacket {
+      let y = tile*64, height = min(64,desktop-y)
+      return MobilePacket(header:["kind":"frame","tile":tile,"width":2,"height":height,"yStride":8,
+        "pixelFormat":"bgrx","originY":y,"desktopWidth":2,"desktopHeight":desktop,"rawGeneration":generation],data:Data(repeating:byte,count:height*8))
+    }
+    let session = MobileSession(id:42,host:[:],kind:"screen",terminal:"fixture")
+    XCTAssertTrue(session.acceptFrame(band(0,1,1)))
+    XCTAssertTrue(session.acceptFrame(band(2,1,2)))
+    XCTAssertTrue(session.acceptFrame(band(0,1,3)))
+    XCTAssertEqual(session.frames.count,2)
+    XCTAssertEqual(session.frames[2]?.data.first,2)
+    XCTAssertEqual(session.desktopSize,CGSize(width:2,height:130))
+    XCTAssertTrue(session.acceptFrame(band(0,2,4,desktop:64)))
+    XCTAssertFalse(session.acceptFrame(band(2,1,5)))
+    XCTAssertEqual(session.frames.count,1)
+    XCTAssertEqual(session.desktopSize,CGSize(width:2,height:64))
+    let good = band(2,1,6)
+    var invalid=good.header;invalid["originY"]=127
+    XCTAssertNil(RawScreenLayout(MobilePacket(header:invalid,data:good.data)))
+  }
+
+  @MainActor
   func testAutomationWarningIsSessionScopedAndDoesNotBlockChatOrConnection() {
     let model = AppModel()
     let session = MobileSession(id: 42, host: ["id": UUID().uuidString, "label": "Fixture"], kind: "ssh", terminal: "fixture")

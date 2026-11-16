@@ -1,11 +1,12 @@
 import { screenAttempt, screenConnectionError } from "../screenConnection";
 import { ScreenRecovery } from "../screenRecovery";
+import { VNCDesktopControl } from "../screenVNC";
 import { ScreenLoginAction, type ScreenLoginState } from "../screenLogin";
 import { ScreenScroll } from "../screenScroll";
 import { RemoteVideoDiagnostics } from "../remoteVideoDiagnostics";
 import { RemoteVideoDiagnosticsDialog } from "./RemoteVideoDiagnosticsDialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { HighPerformanceRenderer, ScreenAudio, screenPackets, validateScreenDisplay, type ScreenDisplay } from "../screenMedia";
+import { HighPerformanceRenderer, RawScreenRenderer, ScreenAudio, screenPackets, validateScreenDisplay, type ScreenDisplay } from "../screenMedia";
 import { useTransferStore, finishRemoteTransfers, updateTransferProgress, registerTransferControl, type TransferRecord } from "./SftpPanel";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -96,6 +97,9 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
   const [retry, setRetry] = useState(0);
   const recovery = useRef(new ScreenRecovery());
   const [hpResolution, setHPResolution] = useState("1920x1080");
+  const vncControl=useRef(new VNCDesktopControl());
+  const [vncDesktop,setVNCDesktop]=useState(vncControl.current.state);
+  vncControl.current.changed=setVNCDesktop;
   const [hasFrame, setHasFrame] = useState(false);
   const [loginState, setLoginState] = useState<ScreenLoginState>({busy:false,message:""});
   const login = useRef(new ScreenLoginAction());
@@ -139,7 +143,8 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
   const remoteDrag=useRef<string[]>([]), nativeDragging=useRef(false);
   const pointerStart=useRef<{pointerId:number;outside:boolean;requested:boolean}>();
   const send = (command: AIValue) => invoke("screen_send", { sessionId: session.id, command });
-  login.current.available = () => hp && connected.current && hasFrame && isActive.current && document.hasFocus();
+  vncControl.current.send=async command=>{await send(command);};
+  login.current.available = () => !rdp && connected.current && hasFrame && !vncDesktop.busy && isActive.current && document.hasFocus();
   login.current.prepare = async () => { await keyboardQueue.current; await send({kind:"release"}); };
   login.current.changed = setLoginState;
   useEffect(() => {
@@ -280,7 +285,7 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
     };
     useAppStore.getState().setSessionLifecycle(session.id,"connecting");
     let timer: ReturnType<typeof setTimeout>;
-    let renderer:HighPerformanceRenderer|undefined;
+    let renderer:HighPerformanceRenderer|undefined; let rawRenderer:RawScreenRenderer|undefined;
     const [width,height] = hpResolution.split("x").map(Number);
     let desktop:ScreenDisplay = {width,height,tiles:4};
     if(hp && canvas.current){canvas.current.width=width;canvas.current.height=height;}
@@ -288,12 +293,14 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
     let frames = 0, since = performance.now();
     diagnostics.current = new RemoteVideoDiagnostics();
     setFps(0); setBandwidth("");
+    vncControl.current.reset();
     connected.current = false; clipboardSequence.current = -1; setCertificate(undefined);
     hpClipboardEpoch.current++;
     setStatus("连接中…");
     const events = listen<AIValue>("screen-event", ({payload:e}) => {
       if (e.sessionId !== session.id || e.attemptId !== attempt.attemptId || cancelled) return;
       diagnostics.current.event(e, performance.now());
+      if(!hp&&!rdp)vncControl.current.event(e);
       if (recoveryAttempt.pending) return;
       if (e.kind === "firstFrame") recoveryAttempt.frame();
       if (e.kind === "connected") {
@@ -396,14 +403,14 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
             }
             const pcm=await invoke<ArrayBuffer>("screen_audio_next",{sessionId:session.id});if(cancelled)return;if(audioEnabled.current)player.current?.push(pcm);
           } else {
-            const frame = decodeScreenFrame(bytes);
-            if (frame && canvas.current) {
-              diagnostics.current.received(1, performance.now());
-              const c=canvas.current;c.width=frame.width;c.height=frame.height;
-              const context=c.getContext("2d");if(!context)throw Error("Canvas 2D unavailable");
-              context.putImageData(new ImageData(frame.rgba,frame.width,frame.height),0,0);
-              diagnostics.current.renderer="Canvas 2D · BGRX";
-              frames++;diagnostics.current.rendered(performance.now());
+            const packets = screenPackets(bytes);
+            if (packets.length && canvas.current) {
+              rawRenderer ??= new RawScreenRenderer(canvas.current);
+              let changed = false;
+              for (const packet of packets) changed = rawRenderer.update(packet.header, packet.data) || changed;
+              diagnostics.current.received(packets.length, performance.now());
+              diagnostics.current.renderer="Canvas 2D · BGRX bands";
+              if (changed) { frames++;diagnostics.current.rendered(performance.now());setHasFrame(true); }
             }
           }
           const elapsed = performance.now() - since;
@@ -415,7 +422,7 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
     void events.then(() => attempt.start({host,savedHost:session.screenSharingSavedHost ?? false,frameRate:frameRateRef.current,videoCodec:videoCodecRef.current,displaySize:hp?[width,height]:undefined})).then(() => {
       if (!cancelled) void poll();
     }).catch(e => { if (!cancelled) { hasConnectionError=true;setStatus(String(e));useAppStore.getState().setSessionLifecycle(session.id,"failed"); } });
-    return () => {recoveryAttempt.dispose();login.current.reset();hpClipboardEpoch.current++;connected.current=false;for(const request of hpReads.current.values()){clearTimeout(request.timer);request.reject(Error("会话已关闭"));}hpReads.current.clear();renderer?.close();player.current?.close();cancelled=true;finishRemoteTransfers(session.id);preparingFile.current=undefined;clearTimeout(timer);endOffer("会话已关闭");void events.then(f=>f());void attempt.close().catch(()=>{});};
+    return () => {vncControl.current.reset();recoveryAttempt.dispose();login.current.reset();hpClipboardEpoch.current++;connected.current=false;for(const request of hpReads.current.values()){clearTimeout(request.timer);request.reject(Error("会话已关闭"));}hpReads.current.clear();renderer?.close();player.current?.close();cancelled=true;finishRemoteTransfers(session.id);preparingFile.current=undefined;clearTimeout(timer);endOffer("会话已关闭");void events.then(f=>f());void attempt.close().catch(()=>{});};
   },[session.id,retry,hpResolution]);
   useEffect(() => {
     if (connected.current) notify({kind:"frameRate",fps:frameRate});
@@ -501,16 +508,21 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
     <header><span>{status}</span><button className="remote-video-stats" aria-label="画面诊断" title="画面诊断" onClick={()=>setShowDiagnostics(true)}>{fps} FPS · {bandwidth || "↓ — · ↑ —"} ⓘ</button>
       <label><input type="checkbox" checked={sync} onChange={e=>setSync(e.target.checked)}/>双向同步剪贴板</label>
       {(rdp||hp) && <label><input type="checkbox" checked={audio} onChange={e=>{setAudio(e.target.checked);if(e.target.checked&&hp)player.current?.resume();}}/>声音</label>}
-      {hp && <>
-        <button data-testid="screen-login-password" disabled={!active || !connected.current || !hasFrame || loginState.busy}
+      {!rdp && <>
+        <button data-testid="screen-login-password" disabled={!active || !connected.current || !hasFrame || loginState.busy || vncDesktop.busy}
           title="请先点击远端对应账号的空密码框，再点击此按钮。将输入当前凭证密码并回车；按 Esc 可取消。"
           onClick={()=>{if(attemptId.current)void login.current.start(session.id,attemptId.current);}}>输入密码并登录</button>
         {loginState.busy && <button data-testid="screen-login-cancel" onClick={()=>login.current.cancel()}>取消</button>}
       </>}
-      {hp && <button onClick={()=>void (document.fullscreenElement ? document.exitFullscreen() : display.current?.requestFullscreen())}>全屏</button>}
+      {!rdp && <button onClick={()=>void (document.fullscreenElement ? document.exitFullscreen() : display.current?.requestFullscreen())}>全屏</button>}
       {hp && <label title="切换分辨率会自动重新连接">分辨率（重连） <select aria-label="远端分辨率" value={hpResolution} onChange={e=>{recovery.current.reset();setHPResolution(e.target.value);}}>
         <option value="1280x720">1280 × 720</option><option value="1920x1080">1920 × 1080</option>
         <option value="2560x1440">2560 × 1440</option><option value="3840x2160">3840 × 2160</option>
+      </select></label>}
+      {!rdp&&!hp && <label title={vncDesktop.message}>分辨率 <select aria-label="VNC 远端分辨率"
+        disabled={!connected.current||!vncDesktop.supported||vncDesktop.busy||vncDesktop.blocked}
+        value={`${vncDesktop.width}x${vncDesktop.height}`} onChange={e=>{const[w,h]=e.target.value.split("x").map(Number);void vncControl.current.resize(w,h);}}>
+        {[...new Set([`${vncDesktop.width}x${vncDesktop.height}`,"1280x720","1920x1080","2560x1440","3840x2160"])].map(s=><option key={s} value={s}>{s==="0x0"?"等待画面":s.replace("x"," × ")}</option>)}
       </select></label>}
       {rdp && <>
         <button onClick={()=>notify({kind:"secureAttention"})}>Ctrl+Alt+Del</button>
@@ -520,7 +532,8 @@ export function ScreenSurface({ session, active }: { session: SessionDescriptor;
       <button onClick={()=>disconnectAttempt.current?.()}>断开</button>
       <button onClick={()=>{recovery.current.reset();setRetry(value=>value+1);}}>重新连接</button>
     </header>
-    {hp && loginState.message && <div className="screen-login-status" role="status">{loginState.message}</div>}
+    {!rdp && loginState.message && <div className="screen-login-status" role="status">{loginState.message}</div>}
+    {!rdp&&!hp && <div className="screen-login-status" role="status">{vncDesktop.message}</div>}
     {showDiagnostics && <RemoteVideoDiagnosticsDialog close={()=>setShowDiagnostics(false)} report={()=>diagnostics.current.report(
       rdp ? "RDP" : hp ? "Apple High Performance" : "VNC",
       canvas.current?.width ? `${canvas.current.width} × ${canvas.current.height}` : "—",

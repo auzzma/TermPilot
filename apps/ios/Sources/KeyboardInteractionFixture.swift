@@ -32,7 +32,16 @@ struct KeyboardInteractionFixture: View {
       session.terminalView.getTerminal().setCursorStyle(.steadyBlock)
       session.terminalView.cursorStyleChanged(source: session.terminalView.getTerminal(), newStyle: .steadyBlock)
       session.terminalView.feed(text: "\u{1b}[?25l")
+      if let desktop = ProcessInfo.processInfo.environment["TERMPILOT_DESKTOP_UI_FIXTURE"] {
+        session.connected = true; model.sessions = [session]; model.selected = session.id
+        model.bindDesktopControls(session)
+        if desktop == "supported" { session.desktopControls.receive(["kind":"vncCapabilities","canResize":true]) }
+      }
       model.keyboardFixtureCommand = { command in
+        if command.text("kind") == "resize", ProcessInfo.processInfo.environment["TERMPILOT_DESKTOP_UI_FIXTURE"] == "supported" {
+          model.receive(MobilePacket(header:["session":session.id,"kind":"desktopSize","width":command.number("width"),"height":command.number("height")],data:Data()))
+          session.desktopControls.receive(["kind":"vncResizeResult","requestID":command.text("requestID"),"accepted":true])
+        }
         if command.text("kind") == "pointer", command.number("buttons") != 0,
            ProcessInfo.processInfo.environment["TERMPILOT_CURSOR_UI_FIXTURE"] != "1" {
           model.error = "Unexpected remote mouse-down"

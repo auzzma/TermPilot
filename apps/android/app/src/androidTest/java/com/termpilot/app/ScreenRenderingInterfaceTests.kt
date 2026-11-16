@@ -27,13 +27,40 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.ConcurrentLinkedQueue
 import android.view.MotionEvent
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import kotlin.concurrent.thread
 
 /** Checks the actual screen pixels, beyond receiving the first decoded frame. */
 class ScreenRenderingInterfaceTests {
     @get:Rule val compose=createAndroidComposeRule<MainActivity>()
+    @Test fun loginButtonReadsFreshCredentialAndSendsNativeAcknowledgedKeys() {
+        val model=compose.activity.mobileModel
+        compose.waitUntil(15000){model.ready}
+        val cid=UUID.randomUUID().toString()
+        fun savePassword(value:String)=runBlocking{withContext(Dispatchers.Main){model.call(obj("method" to "vault.save","collection" to "credentials","item" to obj("id" to cid,"label" to "Login fixture","kind" to "password","username" to "fixture","password" to value)))}}
+        AnimatedRfbServer("old").use { server ->
+            savePassword("old")
+            try {
+                runBlocking{withContext(Dispatchers.Main){model.connect(obj("id" to UUID.randomUUID().toString(),"label" to "Login fixture","hostname" to "127.0.0.1","port" to server.port,"connectionKind" to "screenSharing","mode" to "standardVNC","credentialID" to cid,"username" to "fixture"))}}
+                compose.waitUntil(15000){model.current?.connected==true}
+                val session=compose.runOnIdle{model.current!!}
+                savePassword("new!") // Deliberately leave AppModel.records stale.
+                compose.onNodeWithTag("remote-login-password").performScrollTo().performClick()
+                compose.waitUntil(10000){server.keys.count{it.first==1}==5}
+                compose.waitUntil{!session.desktopControls.loginBusy}
+                assertEquals(listOf(110,101,119,33,0xff0d).flatMap{listOf(1 to it,0 to it)},server.keys.toList())
+                runBlocking{withContext(Dispatchers.Main){model.call(obj("method" to "vault.delete","collection" to "credentials","id" to cid))}}
+                compose.onNodeWithTag("remote-login-password").performScrollTo().performClick()
+                compose.waitUntil(5000){session.desktopControls.loginMessage.contains("凭证不可用")}
+                assertEquals(10,server.keys.size)
+            } finally {
+                runBlocking{withContext(Dispatchers.Main){model.current?.let{model.close(it)};model.call(obj("method" to "vault.delete","collection" to "credentials","id" to cid))}}
+            }
+        }
+    }
     @Test fun touchpadCursorOnStaticDesktopMatchesRemoteClickAndViewport() {
         val model=compose.activity.mobileModel
         compose.waitUntil(15000){model.ready}
@@ -49,7 +76,7 @@ class ScreenRenderingInterfaceTests {
                     return null
                 }
                 lateinit var canvas:RemoteCanvas
-                compose.waitUntil(10000){compose.runOnIdle{find(compose.activity.window.decorView)?.also{canvas=it}!=null&&session.renderedFrames>2}}
+                compose.waitUntil(10000){compose.runOnIdle{find(compose.activity.window.decorView)?.also{canvas=it}!=null&&session.renderedFrames>0}}
                 server.paused=true
                 Thread.sleep(250)
                 val frames=compose.runOnIdle{session.renderedFrames}
@@ -109,6 +136,23 @@ class ScreenRenderingInterfaceTests {
             }finally{runBlocking{withContext(Dispatchers.Main){model.current?.let{model.close(it)}}}}
         }
     }
+    @Test fun rawBandsRetainOtherRegionsAndRejectStaleResizeFrames() {
+        fun band(tile:Int,generation:Int,byte:Int,desktop:Int=130):Packet {
+            val y=tile*64;val h=minOf(64,desktop-y)
+            return Packet(obj("kind" to "frame","tile" to tile,"width" to 2,"height" to h,"yStride" to 8,
+                "pixelFormat" to "bgrx","originY" to y,"desktopWidth" to 2,"desktopHeight" to desktop,"rawGeneration" to generation),ByteArray(h*8){byte.toByte()})
+        }
+        val frames=RemoteFrames()
+        frames.publish(band(0,1,1));frames.publish(band(2,1,2));frames.publish(band(0,1,3))
+        assertEquals(2,frames.snapshot().size)
+        assertEquals(2.toByte(),frames.snapshot().getValue(2).packet.payload.first())
+        assertEquals(128,RawFrameLayout.read(frames.snapshot().getValue(2).packet).y)
+        frames.publish(band(0,2,4,64));frames.publish(band(2,1,5))
+        assertEquals(1,frames.snapshot().size)
+        assertEquals(4.toByte(),frames.snapshot().getValue(0).packet.payload.first())
+        val invalid=band(0,2,6,64);invalid.header.put("originY",1);frames.publish(invalid)
+        assertEquals(4.toByte(),frames.snapshot().getValue(0).packet.payload.first())
+    }
     @Test fun aFailedControlEventDoesNotStopFollowingVideoFrames()=runBlocking {
         val events=ArrayDeque(listOf(
             Packet(obj("kind" to "frame","tile" to 0),byteArrayOf(1)),
@@ -144,7 +188,7 @@ class ScreenRenderingInterfaceTests {
                 }
                 lateinit var canvas:RemoteCanvas
                 compose.waitUntil(10000){compose.runOnIdle{find(compose.activity.window.decorView)?.also{canvas=it}!=null}}
-                fun centerPixel():Int {
+                fun displayedPixels():List<Int> {
                     lateinit var bitmap:Bitmap
                     val latch=CountDownLatch(1);var result=-1
                     compose.runOnIdle {
@@ -152,19 +196,24 @@ class ScreenRenderingInterfaceTests {
                         PixelCopy.request(canvas,bitmap,{result=it;latch.countDown()},Handler(Looper.getMainLooper()))
                     }
                     check(latch.await(3,TimeUnit.SECONDS)){"PixelCopy timed out"}
-                    if(result!=PixelCopy.SUCCESS){bitmap.recycle();return Color.TRANSPARENT}
-                    val pixel=bitmap.getPixel(bitmap.width/2,bitmap.height/2);bitmap.recycle();return pixel
+                    if(result!=PixelCopy.SUCCESS){bitmap.recycle();return emptyList()}
+                    val scale=minOf(bitmap.width/320f,bitmap.height/180f)
+                    val top=(bitmap.height-180*scale)/2
+                    // Sample all three full-width bands, including the shorter last one.
+                    val pixels=listOf(32,96,154).map{y->bitmap.getPixel(bitmap.width/2,(top+y*scale).toInt())}
+                    bitmap.recycle();return pixels
                 }
                 for(color in listOf(Color.RED,Color.BLUE,Color.GREEN)){
                     server.color.set(color)
-                    val before=compose.runOnIdle{session.frameRevision}
-                    compose.waitUntil(10000){session.frameRevision>before+3}
                     val deadline=System.nanoTime()+5_000_000_000
-                    var observed=Color.TRANSPARENT
-                    do {observed=centerPixel();if(observed==color)break;Thread.sleep(50)}while(System.nanoTime()<deadline)
-                    assertEquals("Decoded frames=${session.frameRevision}; screen must change from first frame",color,observed)
+                    var observed=emptyList<Int>()
+                    do {observed=displayedPixels();if(observed==List(3){color})break;Thread.sleep(50)}while(System.nanoTime()<deadline)
+                    assertEquals("Decoded frames=${session.frameRevision}; every band must show the new color",List(3){color},observed)
                 }
-                compose.waitUntil(5000){session.renderedFPS>0}
+                assertTrue("Three distinct images must actually be rendered",session.renderedFrames>=3)
+                val unchanged=compose.runOnIdle{session.frameRevision}
+                Thread.sleep(250)
+                assertEquals("Identical server updates must not enqueue new pixel buffers",unchanged,compose.runOnIdle{session.frameRevision})
                 assertNull(model.error)
                 // A static remote desktop sends no replacement frame when Android
                 // recreates its EGL surface (background, orientation, view changes).
@@ -172,10 +221,10 @@ class ScreenRenderingInterfaceTests {
                 Thread.sleep(250)
                 compose.runOnIdle {canvas.preserveEGLContextOnPause=false;canvas.onPause();canvas.onResume()}
                 val deadline=System.nanoTime()+3_000_000_000L
-                var restored=Color.TRANSPARENT
-                do {restored=centerPixel();if(restored==Color.GREEN)break;Thread.sleep(50)}while(System.nanoTime()<deadline)
-                assertEquals("Retained frame must survive EGL context recreation without network traffic",Color.GREEN,restored)
-                println("Visible OpenGL pixels changed red -> blue -> green, with advancing frame count and FPS.")
+                var restored=emptyList<Int>()
+                do {restored=displayedPixels();if(restored==List(3){Color.GREEN})break;Thread.sleep(50)}while(System.nanoTime()<deadline)
+                assertEquals("Retained bands must survive EGL context recreation without network traffic",List(3){Color.GREEN},restored)
+                println("All visible OpenGL bands changed red -> blue -> green and survived EGL recreation; unchanged frames were suppressed.")
             } finally {runBlocking{withContext(Dispatchers.Main){model.current?.let{model.close(it)}}}}
         }
     }
@@ -183,14 +232,15 @@ class ScreenRenderingInterfaceTests {
     @Test fun highPerformanceTilesKeepTheirLatestPixelsAndUseActualChromaSize() {
         val model=compose.activity.mobileModel
         compose.waitUntil(15000){model.ready}
-        val session=Session(0,obj("label" to "Tile verification"),"screen","")
+        val session=Session(0,obj("label" to "Tile verification","mode" to "highPerformance"),"screen","")
+        var desktop=DesktopResolution(1920,1080)
         lateinit var canvas:RemoteCanvas
         compose.runOnIdle {
             compose.activity.setContent{AndroidView(factory={RemoteCanvas(it,model,session).also{view->canvas=view}},modifier=Modifier.fillMaxSize())}
         }
         compose.waitUntil(5000){runCatching{canvas.width>0&&canvas.height>0}.getOrDefault(false)}
         fun tile(index:Int,y:Int,subsampled:Boolean) {
-            val w=1920;val h=270;val cw=if(subsampled)w/2 else w;val ch=if(subsampled)h/2 else h
+            val w=desktop.width;val h=desktop.height/4;val cw=if(subsampled)w/2 else w;val ch=if(subsampled)h/2 else h
             val data=ByteArray(w*h+cw*ch*2){if(it<w*h)y.toByte()else 128.toByte()}
             session.frames.publish(Packet(obj("tile" to index,"width" to w,"height" to h,"biplanar" to true,
                 "yStride" to w,"uvStride" to cw*2,"chromaWidth" to cw,"chromaHeight" to ch,"yLength" to w*h),data))
@@ -204,9 +254,9 @@ class ScreenRenderingInterfaceTests {
             }
             check(latch.await(3,TimeUnit.SECONDS)){"PixelCopy timed out"}
             if(result!=PixelCopy.SUCCESS){bitmap.recycle();return listOf(-1,-1,-1,-1)}
-            val scale=minOf(bitmap.width/1920f,bitmap.height/1080f)
-            val top=(bitmap.height-1080*scale)/2
-            return (0..3).map{Color.red(bitmap.getPixel(bitmap.width/2,(top+(it+.5f)*270*scale).toInt()))}.also{bitmap.recycle()}
+            val scale=minOf(bitmap.width.toFloat()/desktop.width,bitmap.height.toFloat()/desktop.height)
+            val top=(bitmap.height-desktop.height*scale)/2
+            return (0..3).map{Color.red(bitmap.getPixel(bitmap.width/2,(top+(it+.5f)*(desktop.height/4)*scale).toInt()))}.also{bitmap.recycle()}
         }
         fun awaitPixels(expected:List<Int>) {
             val deadline=System.nanoTime()+5_000_000_000L
@@ -220,15 +270,22 @@ class ScreenRenderingInterfaceTests {
         tile(2,230,true);awaitPixels(listOf(40,90,230,190))
         compose.runOnIdle{canvas.preserveEGLContextOnPause=false;canvas.onPause();canvas.onResume()}
         awaitPixels(listOf(40,90,230,190))
+        for(size in DesktopResolution.presets.filter{it!=desktop}){
+            desktop=size
+            compose.runOnIdle{session.receiveDesktopSize(obj("width" to size.width,"height" to size.height))}
+            listOf(45,95,145,195).forEachIndexed{i,y->tile(i,y,true)}
+            awaitPixels(listOf(45,95,145,195))
+        }
         assertNull(model.error)
     }
 }
 
-private class AnimatedRfbServer:AutoCloseable {
+private class AnimatedRfbServer(private val password:String?=null):AutoCloseable {
     private val server=ServerSocket(0,1,InetAddress.getByName("127.0.0.1"))
     val port get()=server.localPort
     val color=AtomicInteger(Color.RED)
     val pointers=ConcurrentLinkedQueue<Triple<Int,Int,Int>>()
+    val keys=ConcurrentLinkedQueue<Pair<Int,Int>>()
     @Volatile var paused=false
     @Volatile private var socket:Socket?=null
     @Volatile private var closed=false
@@ -237,7 +294,17 @@ private class AnimatedRfbServer:AutoCloseable {
             socket=client;client.tcpNoDelay=true
             val input=DataInputStream(client.getInputStream());val output=DataOutputStream(client.getOutputStream())
             fun bytes(n:Int)=ByteArray(n).also{input.readFully(it)}
-            output.writeBytes("RFB 003.008\n");bytes(12);output.write(byteArrayOf(1,1));check(input.readUnsignedByte()==1)
+            output.writeBytes("RFB 003.008\n");bytes(12)
+            if(password==null){output.write(byteArrayOf(1,1));check(input.readUnsignedByte()==1)}
+            else {
+                output.write(byteArrayOf(1,2));check(input.readUnsignedByte()==2)
+                val challenge=ByteArray(16){it.toByte()};output.write(challenge);output.flush()
+                val plain=password.toByteArray(Charsets.ISO_8859_1)
+                val key=ByteArray(8){Integer.reverse(plain.getOrElse(it){0}.toInt() and 255).ushr(24).toByte()}
+                val cipher=javax.crypto.Cipher.getInstance("DES/ECB/NoPadding")
+                cipher.init(javax.crypto.Cipher.ENCRYPT_MODE,javax.crypto.spec.SecretKeySpec(key,"DES"))
+                check(bytes(16).contentEquals(cipher.doFinal(challenge))){"Fixture authentication response mismatch"}
+            }
             output.writeInt(0);bytes(1);output.writeShort(320);output.writeShort(180);output.write(ByteArray(16));output.writeInt(4);output.writeBytes("Test")
             while(!closed){when(input.readUnsignedByte()){
                 0->bytes(19)
@@ -245,7 +312,7 @@ private class AnimatedRfbServer:AutoCloseable {
                 3->{bytes(9);if(paused)continue;Thread.sleep(40);val c=color.get();val pixels=ByteArray(320*180*4)
                     for(i in pixels.indices step 4){pixels[i]=Color.blue(c).toByte();pixels[i+1]=Color.green(c).toByte();pixels[i+2]=Color.red(c).toByte()}
                     output.write(byteArrayOf(0,0,0,1));output.writeShort(0);output.writeShort(0);output.writeShort(320);output.writeShort(180);output.writeInt(0);output.write(pixels);output.flush()}
-                4->bytes(7)
+                4->{val down=input.readUnsignedByte();bytes(2);keys.add(down to input.readInt())}
                 5->pointers.add(Triple(input.readUnsignedByte(),input.readUnsignedShort(),input.readUnsignedShort()))
                 6->{bytes(3);bytes(input.readInt())}
                 else->error("Unknown client message")

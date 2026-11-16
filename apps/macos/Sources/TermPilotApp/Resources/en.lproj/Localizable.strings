@@ -1234,3 +1234,15 @@
 "Retrying Remote Video" = "Retrying Remote Video";
 
 "The remote Mac connected but no video arrived. Reconnect or check the remote sharing service and network." = "The remote Mac connected but no video arrived. Reconnect or check the remote sharing service and network.";
+
+"Change resolution in the remote system settings unless the VNC server supports remote resizing." = "Change resolution in the remote system settings unless the VNC server supports remote resizing.";
+"Requesting remote resolution…" = "Requesting remote resolution…";
+"The connection is unavailable. Reconnect before changing resolution." = "The connection is unavailable. Reconnect before changing resolution.";
+"The server did not confirm the resolution. Reconnect before retrying." = "The server did not confirm the resolution. Reconnect before retrying.";
+"Resolution changes require approval by the remote VNC server." = "Resolution changes require approval by the remote VNC server.";
+"This display layout cannot be resized here. Change it in the remote system settings." = "This display layout cannot be resized here. Change it in the remote system settings.";
+"Waiting for the remote system to apply the resolution…" = "Waiting for the remote system to apply the resolution…";
+"The remote server confirmed the resolution change." = "The remote server confirmed the resolution change.";
+"The remote server does not permit resolution changes." = "The remote server does not permit resolution changes.";
+"The remote server lacks resources for this resolution." = "The remote server lacks resources for this resolution.";
+"The remote server rejected this resolution. Try another size." = "The remote server rejected this resolution. Try another size.";

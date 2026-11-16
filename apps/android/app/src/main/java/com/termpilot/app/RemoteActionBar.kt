@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -23,10 +24,11 @@ internal enum class RemoteAction { Touchpad, Keyboard, Paste, Copy, Drag, Scroll
     audioEnabled:Boolean,
     shortcuts:List<TerminalKey>,
     onAction:(RemoteAction)->Unit,
-    onShortcut:(TerminalKey)->Unit
+    onShortcut:(TerminalKey)->Unit,
+    trailingActions:@Composable ()->Unit={}
 ) {
     Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(6.dp),
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(6.dp).testTag("remote-action-bar"),
         horizontalArrangement=Arrangement.spacedBy(6.dp),
         verticalAlignment=Alignment.CenterVertically
     ) {
@@ -45,11 +47,12 @@ internal enum class RemoteAction { Touchpad, Keyboard, Paste, Copy, Drag, Scroll
         shortcuts.forEach{item->RemoteActionButton(item.name,{onShortcut(item)})}
 
         RemoteActionDivider()
-        RemoteActionButton(tr("声音"),{onAction(RemoteAction.Audio)},active=audioEnabled)
+        RemoteActionButton(tr("声音"),{onAction(RemoteAction.Audio)},Modifier.testTag("remote-action-audio"),active=audioEnabled)
+        trailingActions()
     }
 }
 
-@Composable private fun RemoteActionDivider() {
+@Composable internal fun RemoteActionDivider() {
     VerticalDivider(Modifier.padding(horizontal=4.dp).height(22.dp),color=MaterialTheme.colorScheme.outlineVariant)
 }
 
@@ -57,11 +60,13 @@ internal enum class RemoteAction { Touchpad, Keyboard, Paste, Copy, Drag, Scroll
     label:String,
     onClick:()->Unit,
     modifier:Modifier=Modifier,
-    active:Boolean?=null
+    active:Boolean?=null,
+    enabled:Boolean=true
 ) {
     val colors=MaterialTheme.colorScheme
     OutlinedButton(
         onClick=onClick,
+        enabled=enabled,
         modifier=modifier.heightIn(min=44.dp).then(if(active!=null)Modifier.semantics{selected=active}else Modifier),
         border=BorderStroke(1.dp,if(active==true)colors.primary else colors.outline),
         colors=ButtonDefaults.outlinedButtonColors(containerColor=if(active==true)colors.primaryContainer else Color.Transparent),

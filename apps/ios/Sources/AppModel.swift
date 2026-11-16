@@ -5,6 +5,10 @@ import UIKit
 @MainActor final class MobileSession: ObservableObject, Identifiable {
   let id: UInt64
   let host: JSON
+  var sourceHost: JSON = [:]
+  var savedHost = false
+  let desktopControls = MobileDesktopControls()
+  var highPerformance: Bool { protocolKind == "screen" && host.text("mode") == "highPerformance" }
   let protocolKind: String
   let terminalID: String
   let terminalView = MobileTerminalView(
@@ -48,6 +52,23 @@ import UIKit
   weak var remoteKeyboard: RemoteKeyboard.InputView?
   @Published var isClosing = false
   var frames: [Int: MobilePacket] = [:]
+  var frameRevisions: [Int: Int] = [:]
+  private var rawFrameGeneration = -1
+  func acceptFrame(_ packet: MobilePacket) -> Bool {
+    if packet.header.text("pixelFormat") == "bgrx" {
+      guard let layout = RawScreenLayout(packet), layout.generation >= rawFrameGeneration else { return false }
+      if layout.generation != rawFrameGeneration {
+        frames.removeAll(); frameRevisions.removeAll(); rawFrameGeneration = layout.generation
+      }
+      desktopSize = CGSize(width: layout.width, height: layout.desktopHeight)
+    }
+    let tile = packet.header.number("tile")
+    guard (0..<16).contains(tile) else { return false }
+    frames[tile] = packet
+    frameRevisions[tile] = frameRevision + 1
+    frameRevision += 1
+    return true
+  }
   @Published var frameRevision = 0
   @Published var desktopSize = CGSize(width: 1920, height: 1080)
   var ai: UInt64?
@@ -57,7 +78,7 @@ import UIKit
   @Published var previewFiles: [URL] = []
   @Published var remoteFiles: [String] = []
   @Published var remoteClipboard = ""
-  @Published var activePanel = "terminal"
+  @Published var activePanel = "terminal" { didSet { if activePanel != "terminal" { desktopControls.cancelLogin() } } }
   @Published var selectedTool = "monitor"
   var toolsReturnPanel = "terminal"
   var remoteDownloads: [String: URL] = [:]
@@ -96,7 +117,8 @@ struct Interaction: Identifiable {
 @MainActor final class AppModel: ObservableObject {
   @Published var records: [String: [JSON]] = [:]
   @Published var sessions: [MobileSession] = []
-  @Published var selected: UInt64?
+  @Published var selected: UInt64? { didSet { if selected != oldValue { sessions.first { $0.id == oldValue }?.desktopControls.cancelLogin() } } }
+  var desktopForeground = true
   @Published var error: String?
   @Published var interaction: Interaction?
   @Published var aiSettings: JSON = [:]
@@ -190,23 +212,25 @@ struct Interaction: Identifiable {
     _ = try await call(["method": "vault.delete", "collection": collection, "id": id])
     await reload()
   }
-  func connect(_ saved: JSON) async throws {
-    let resolved = try await call([
-      "method": "resolveConnection", "host": saved, "credentials": records["credentials"] ?? [],
-      "proxyProfiles": records["proxies"] ?? [],
-    ]).object("host")
+  func resolveDesktopConnection(_ saved: JSON) async throws -> (JSON, JSON) {
+    let credentials = try await call(["method":"vault.list","collection":"credentials"]).array("items")
+    let proxies = try await call(["method":"vault.list","collection":"proxies"]).array("items")
+    let resolved = try await call(["method":"resolveConnection","host":saved,"credentials":credentials,"proxyProfiles":proxies]).object("host")
     var config = resolved
-    if resolved.text("connectionKind", "ssh") != "ssh",
-      let profile = try await call([
-        "method": "vault.get", "collection": "screenSharing", "id": resolved.text("id"),
-      ])["item"] as? JSON
-    {
+    if resolved.text("connectionKind","ssh") != "ssh",
+      let profile = try await call(["method":"vault.get","collection":"screenSharing","id":resolved.text("id")])["item"] as? JSON {
       config.merge(profile) { _, b in b }
     }
     if !resolved.text("credentialID").isEmpty {
-      config["username"] = resolved["username"]
-      config["password"] = resolved["password"]
+      config["username"] = resolved["username"]; config["password"] = resolved["password"]
     }
+    return (resolved,config)
+  }
+  func connect(_ saved: JSON, resolution: DesktopResolution? = nil, prepared: (JSON, JSON)? = nil) async throws {
+    let pair: (JSON,JSON)
+    if let prepared { pair = prepared } else { pair = try await resolveDesktopConnection(saved) }
+    let resolved = pair.0
+    var config = pair.1
     let connection = resolved.text("connectionKind", "ssh")
     let kind = connection == "screenSharing" ? "screen" : connection
     let host = resolved.text("hostname")
@@ -226,6 +250,7 @@ struct Interaction: Identifiable {
     config["mode"] = config.text("mode", "standardVNC")
     if kind == "rdp" { config["port"] = resolved.number("port", 3389) }
     if kind == "screen" { config["port"] = resolved.number("port", 5900) }
+    if kind == "screen", config.text("mode") == "highPerformance", let resolution { config["width"] = resolution.width; config["height"] = resolution.height }
     let command: JSON =
       kind == "ssh"
       ? ["type": "connect", "config": config, "cols": 80, "rows": 24]
@@ -234,6 +259,9 @@ struct Interaction: Identifiable {
     let session = MobileSession(
       id: UInt64(result.number("session")), host: config, kind: kind,
       terminal: result.text("terminal"))
+    session.sourceHost = saved
+    session.savedHost = (records["hosts"] ?? []).contains { $0.text("id") == saved.text("id") && !saved.text("id").isEmpty }
+    bindDesktopControls(session)
     session.terminalDelegate = TerminalAdapter(session: session, model: self)
     session.terminalView.terminalDelegate = session.terminalDelegate
     sessions.append(session)
@@ -253,8 +281,12 @@ struct Interaction: Identifiable {
     records["history"] = try await call(["method": "vault.list", "collection": "history"]).array(
       "items")
   }
-  func send(_ session: UInt64, _ command: JSON) async throws {
+  func send(_ session: UInt64, _ command: JSON, desktopAction: Bool = false) async throws {
     guard !closedSessionIDs.contains(session) else { throw CancellationError() }
+    if let s = sessions.first(where: { $0.id == session }), !desktopAction, s.desktopControls.loginBusy {
+      if command.text("kind") == "release" { s.desktopControls.cancelLogin() }
+      else if ["key","text","pointer","scroll","clipboardSend","dragEnter","dragDrop","dragMove"].contains(command.text("kind")) { return }
+    }
     #if DEBUG
     if let keyboardFixtureCommand { keyboardFixtureCommand(command); return }
     #endif
@@ -281,11 +313,12 @@ struct Interaction: Identifiable {
     let saved =
       (records["hosts"] ?? []).first { $0.text("id") == session.host.text("id") } ?? session.host
     try await close(session)
-    try await connect(saved)
+    try await connect(saved, resolution: session.highPerformance ? DesktopResolution(width:session.host.number("width",1920),height:session.host.number("height",1080)) : nil)
   }
   func close(_ session: MobileSession) async throws {
     guard !session.isClosing else { return }
     session.isClosing = true
+    session.desktopControls.stop()
     session.dismissKeyboard()
     let ids = Set([session.id] + (session.ai.map { [$0] } ?? []))
     closedSessionIDs.formUnion(ids)
@@ -494,23 +527,22 @@ struct Interaction: Identifiable {
       }
     case "hostKeyPrompt", "credentialPrompt", "certificate", "approval", "form":
       enqueue(Interaction(session: id, event: event))
+    case "credentialKeySent", "vncCapabilities", "vncResizeResult": if id == session.id { session.desktopControls.receive(event) }
+    case "connected", "desktopSize":
+      let w = event.number("width"), h = event.number("height")
+      if id == session.id, (1...16384).contains(w), (1...16384).contains(h) { session.desktopSize = CGSize(width:w,height:h) }
     case "status":
       session.status = event.text("stage")
       if session.status == "connected" { session.connected = true }
     case "frame":
-      session.frames[event.number("tile")] = packet
+      guard session.acceptFrame(packet) else { return }
       session.videoDiagnostics.received(now: ProcessInfo.processInfo.systemUptime)
-      session.frameRevision += 1
       if !session.connected {
         session.historySucceeded = true
         attempt { try await self.recordConnection(session, ended: false) }
       }
       session.connected = true
       session.status = "已连接"
-      if session.protocolKind == "rdp" || session.host.text("mode", "standardVNC") == "standardVNC"
-      {
-        session.desktopSize = CGSize(width: event.number("width"), height: event.number("height"))
-      }
     case "clipboardChanged":
       attempt {
         try await self.send(id, ["kind": "clipboardFetch", "requestID": UUID().uuidString])
@@ -563,8 +595,9 @@ struct Interaction: Identifiable {
     case "automationError":
       if event.text("sessionId") == String(session.id) { session.automationWarning = event.text("message") }
     case "toolRequest": attempt { try await self.aiTool(session, event: event) }
-    case "error": error = event.text("message", event.text("code", "连接失败"))
+    case "error": if id == session.id { session.desktopControls.cancelLogin() }; error = event.text("message", event.text("code", "连接失败"))
     case "sessionEnded", "disconnected", "exit":
+      if id == session.id { session.desktopControls.stop() }
       closedSessionIDs.insert(id)
       interactionQueue.removeAll { $0.session == id }
       if interaction?.session == id {
@@ -635,6 +668,8 @@ struct Interaction: Identifiable {
     interaction = interactionQueue.isEmpty ? nil : interactionQueue.removeFirst()
   }
   func lifecycle(_ phase: ScenePhase) {
+    desktopForeground = phase == .active
+    if !desktopForeground { sessions.forEach { $0.desktopControls.cancelLogin() } }
     guard runtime != nil else { return }
     if phase == .active {
       for s in sessions where s.protocolKind != "ssh" {

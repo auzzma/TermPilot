@@ -1,3 +1,4 @@
+use super::super::keyboard::valid_credential_key;
 use super::{connection::Writer, offers};
 use crate::{
     ipc::{number, text},
@@ -411,11 +412,6 @@ impl Controls {
         write.send(&offers::framebuffer(!layout, false)).await?;
         Ok(())
     }
-}
-fn valid_credential_key(code: u32) -> bool {
-    code == 0xff0d || (0x20..=0x7e).contains(&code) || (0xa0..=0xff).contains(&code)
-        || (0x01000100..=0x0110ffff).contains(&code)
-            && char::from_u32(code & 0x00ffffff).is_some_and(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}'))
 }
 #[cfg(test)]
 mod tests {

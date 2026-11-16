@@ -147,6 +147,33 @@ final class ScreenSharingTests: XCTestCase {
         XCTAssertLessThanOrEqual(mailbox.takeAudio().reduce(0) { $0 + $1.count }, 192_000)
     }
 
+    func testRawBandsSurviveCoalescingReplayAndResize() throws {
+        func band(_ tile: Int, _ generation: Int, _ byte: UInt8, desktop: Int = 130) throws -> ScreenSharingFrame {
+            let y = tile * 64, height = min(64, desktop-y)
+            let data = Data(repeating: byte, count: 2*height*4)
+            let json = try JSONSerialization.data(withJSONObject: ["kind":"frame", "payloadLength":data.count,
+                "tile":tile,"width":2,"height":height,"yStride":8,"pixelFormat":"bgrx",
+                "rawGeneration":generation,"originY":y,"desktopWidth":2,"desktopHeight":desktop])
+            let h = try JSONDecoder().decode(ScreenSharingMessage.self, from: json)
+            try ScreenSharingFrame.validate(h, payload: data)
+            return ScreenSharingFrame(header: h, data: data)
+        }
+        let mailbox = ScreenSharingMailbox()
+        mailbox.put(try band(0,1,1)); mailbox.put(try band(2,1,2)); mailbox.put(try band(0,1,3))
+        let frames = mailbox.takeFrames()
+        XCTAssertEqual(frames.map { $0.header.originY! }, [0,128])
+        XCTAssertEqual(frames.map { $0.data.first! }, [3,2])
+        mailbox.replayFrames()
+        XCTAssertEqual(mailbox.takeFrames().count, 2)
+        mailbox.put(try band(0,2,4,desktop:64)); mailbox.put(try band(2,1,5))
+        XCTAssertEqual(mailbox.takeFrames().map { $0.data.first! }, [4])
+        mailbox.replayFrames()
+        XCTAssertEqual(mailbox.takeFrames().count, 1)
+        var invalid = try band(2,1,2).header
+        invalid.originY = 127
+        XCTAssertThrowsError(try ScreenSharingFrame.validate(invalid, payload: Data(count:16)))
+    }
+
     func testPointerMappingHonorsLetterboxingAndDragClamping() throws {
         let bounds = CGRect(x: 0, y: 0, width: 1000, height: 1000)
         XCTAssertNil(ScreenSharingGeometry.remotePoint(CGPoint(x: 500, y: 0), in: bounds))

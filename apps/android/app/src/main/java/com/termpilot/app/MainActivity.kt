@@ -55,7 +55,7 @@ class MainActivity:ComponentActivity(){
 @Composable fun TermPilot(model:AppModel){
     var homeTab by remember{mutableStateOf("hosts")}
     val lifecycle=androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle,model){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->when(event){androidx.lifecycle.Lifecycle.Event.ON_START->model.foreground(true);androidx.lifecycle.Lifecycle.Event.ON_STOP->model.foreground(false);else->{}}};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
+    DisposableEffect(lifecycle,model){val observer=androidx.lifecycle.LifecycleEventObserver{_,event->when(event){androidx.lifecycle.Lifecycle.Event.ON_START->model.foreground(true);androidx.lifecycle.Lifecycle.Event.ON_STOP->model.foreground(false);androidx.lifecycle.Lifecycle.Event.ON_PAUSE->model.foreground(false);androidx.lifecycle.Lifecycle.Event.ON_RESUME->model.foreground(true);else->{}}};lifecycle.addObserver(observer);onDispose{lifecycle.removeObserver(observer)}}
     LaunchedEffect(model.selected){model.foreground(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED))}
     var keyPreferences by remember{mutableStateOf(false)}
     var globalAI by remember{mutableStateOf<Session?>(null)}
@@ -180,7 +180,9 @@ private val panels=listOf(Panel("terminal","终端",Icons.Outlined.Terminal),Pan
                 RemoteAction.SystemKey->model.key(s,0xffeb)
                 RemoteAction.Audio->{s.audioEnabled=!s.audioEnabled;model.launch{model.send(s.id,obj("kind" to "audio","enabled" to s.audioEnabled))};if(!s.audioEnabled)s.audio.stop()}
             }
-        },onShortcut={model.key(s,it.code,it.modifier)})
+        },onShortcut={model.key(s,it.code,it.modifier)},trailingActions={
+            if(s.protocol=="screen")MobileDesktopActions(s,model.desktopAvailable(s),login={remote?.hideKeyboard();model.launch{model.enterDesktopPassword(s)}},resize={value->model.launch{model.resizeDesktop(s,value)}})
+        })
     }
 }
 @Composable private fun PanelContent(model:AppModel,s:Session,tab:String){when(tab){"files"->FilesPanel(model,s);"ai"->ChatPanel(model,s);else->ToolsPanel(model,s)}}

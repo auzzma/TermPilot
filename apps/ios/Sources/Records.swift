@@ -103,7 +103,7 @@ struct RecordEditor: View {
             } header: {
               Text(tr("显示"))
             } footer: {
-              Text(tr("高性能使用局域网直连、1080p SDR 单虚拟屏。实际设备的媒体解码能力仍需验收。"))
+              Text(tr("高性能使用局域网直连，默认 1080p SDR，连接后可调整分辨率。"))
             }
           }
         } else if item.collection == "credentials" {

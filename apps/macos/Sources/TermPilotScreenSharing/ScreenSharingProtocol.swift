@@ -9,6 +9,8 @@ struct ScreenSharingMessage: Codable, Sendable {
     var endpoint: String?
     var sha256: String?
     var accepted: Bool?
+    var canResize: Bool?
+    var pending: Bool?
     var offerId: String?
     var message: String?
     var code: String?
@@ -36,6 +38,10 @@ struct ScreenSharingMessage: Codable, Sendable {
     var chromaHeight: Int?
     var biplanar: Bool?
     var pixelFormat: String?
+    var originY: Int?
+    var desktopWidth: Int?
+    var desktopHeight: Int?
+    var rawGeneration: Int?
     var yLength: Int?
     var uLength: Int?
     var vLength: Int?
@@ -79,10 +85,20 @@ struct ScreenSharingFrame: Sendable {
 
     static func validate(_ h: ScreenSharingMessage, payload: Data) throws {
         if h.pixelFormat == "bgrx" {
-            guard h.tile == 0, let width = h.width, let height = h.height,
+            guard let tile = h.tile, (0..<16).contains(tile), let width = h.width, let height = h.height,
                   (1...8192).contains(width), (1...8192).contains(height),
                   width * height <= 16_777_216, h.yStride == width * 4,
                   payload.count == width * height * 4 else { throw ScreenSharingWireError.invalidMessage }
+            if let generation = h.rawGeneration {
+                guard generation > 0, h.desktopWidth == width, let desktopHeight = h.desktopHeight,
+                      (1...8192).contains(desktopHeight), width * desktopHeight <= 16_777_216,
+                      let y = h.originY else { throw ScreenSharingWireError.invalidMessage }
+                let rows = max(64, (desktopHeight + 15) / 16)
+                guard y == tile * rows, y < desktopHeight, height == min(rows, desktopHeight - y)
+                else { throw ScreenSharingWireError.invalidMessage }
+            } else if tile != 0 || h.originY != nil || h.desktopWidth != nil || h.desktopHeight != nil {
+                throw ScreenSharingWireError.invalidMessage
+            }
             return
         }
         guard h.pixelFormat == nil else { throw ScreenSharingWireError.invalidMessage }
@@ -106,6 +122,8 @@ struct ScreenSharingFrame: Sendable {
 final class ScreenSharingMailbox: @unchecked Sendable {
     private let lock = NSLock()
     private var frames: [Int: ScreenSharingFrame] = [:]
+    private var retained: [Int: ScreenSharingFrame] = [:]
+    private var rawGeneration: Int?
     private var audio: [Data] = []
     private var audioBytes = 0
     private var receivedFrames: Int64 = 0
@@ -116,7 +134,12 @@ final class ScreenSharingMailbox: @unchecked Sendable {
 
     func put(_ frame: ScreenSharingFrame) {
         lock.withLock {
+            if let generation = frame.header.rawGeneration {
+                if let previous = rawGeneration, generation < previous { return }
+                if generation != rawGeneration { frames.removeAll(); retained.removeAll(); rawGeneration = generation }
+            }
             frames[frame.header.tile!] = frame
+            retained[frame.header.tile!] = frame
             receivedFrames += 1; lastFrameAt = ProcessInfo.processInfo.systemUptime
         }
     }
@@ -126,6 +149,7 @@ final class ScreenSharingMailbox: @unchecked Sendable {
             return frames.values.sorted { $0.header.tile! < $1.header.tile! }
         }
     }
+    func replayFrames() { lock.withLock { frames = retained } }
     func putAudio(_ data: Data) {
         guard data.count % 8 == 0, data.count <= 192_000 else { return }
         lock.withLock {

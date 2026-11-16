@@ -29,6 +29,27 @@ struct MobilePacket {
   }
 }
 
+struct RawScreenLayout {
+  let generation: Int, y: Int, width: Int, height: Int, desktopHeight: Int
+  init?(_ packet: MobilePacket) {
+    let h = packet.header
+    guard h.text("pixelFormat") == "bgrx", let w = h["width"] as? Int, let height = h["height"] as? Int,
+      let tile = h["tile"] as? Int, (0..<16).contains(tile), (1...8192).contains(w), (1...8192).contains(height),
+      w * height <= 16_777_216, h.number("yStride") == w * 4, packet.data.count == w * height * 4 else { return nil }
+    if h["rawGeneration"] == nil {
+      guard tile == 0, h["originY"] == nil, h["desktopWidth"] == nil, h["desktopHeight"] == nil else { return nil }
+      self.generation = 0; self.y = 0; self.width = w; self.height = height; self.desktopHeight = height
+      return
+    }
+    guard let generation = h["rawGeneration"] as? Int, generation > 0, h.number("desktopWidth") == w,
+      let desktop = h["desktopHeight"] as? Int, (1...8192).contains(desktop), w * desktop <= 16_777_216,
+      let y = h["originY"] as? Int else { return nil }
+    let rows = max(64, (desktop + 15) / 16)
+    guard y == tile * rows, y < desktop, height == min(rows, desktop-y) else { return nil }
+    self.generation = generation; self.y = y; self.width = w; self.height = height; self.desktopHeight = desktop
+  }
+}
+
 /// All vault calls run off the main thread. Polling never borrows a Rust buffer after free.
 final class MobileRuntime: @unchecked Sendable {
   let handle: UInt64

@@ -165,6 +165,10 @@ struct KeyBar: View {
           model.attempt { try await model.send(session.id, ["kind": "audio", "enabled": session.audioEnabled]) }
           if !session.audioEnabled { session.remoteAudio.stop() }
         }
+        if session.protocolKind == "screen" {
+          separator
+          MobileDesktopActions(session:session,controls:session.desktopControls)
+        }
       }.padding(6)
     }.accessibilityIdentifier("remote-action-bar")
   }
@@ -197,7 +201,7 @@ struct KeyBar: View {
     }
   }
 }
-private struct RemoteActionStyle: ButtonStyle {
+struct RemoteActionStyle: ButtonStyle {
   var active = false
   func makeBody(configuration: Configuration) -> some View {
     configuration.label.font(.subheadline).lineLimit(1)

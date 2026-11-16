@@ -12,6 +12,42 @@ export function screenPackets(bytes:ArrayBuffer) {
     if(packets.length>16)throw Error("Too many screen tiles");
   }return packets;
 }
+/** Complete independent raw bands, or the legacy full-frame RDP/VNC packet. */
+export function rawFrameGeometry(h:Record<string,any>,length:number) {
+  const {width,height}=h, tile=h.tile??0;
+  if(![width,height,tile].every(Number.isInteger)||width<1||width>8192||height<1||height>8192||tile<0||tile>=16
+    ||width*height>16777216||h.pixelFormat!=="bgrx"||length!==width*height*4||(h.yStride!==undefined&&h.yStride!==width*4))throw Error("Invalid raw frame");
+  if(h.rawGeneration===undefined){
+    if(tile!==0||h.originY!==undefined||h.desktopWidth!==undefined||h.desktopHeight!==undefined)throw Error("Invalid raw layout");
+    return {width,height,y:0,desktopWidth:width,desktopHeight:height,generation:0,tile};
+  }
+  const {desktopWidth,desktopHeight,originY:y,rawGeneration:generation}=h;
+  const rows=Math.max(64,Math.ceil(desktopHeight/16));
+  if(![desktopWidth,desktopHeight,y,generation].every(Number.isSafeInteger)||generation<1||desktopWidth!==width
+    ||desktopHeight<1||desktopHeight>8192||width*desktopHeight>16777216||y!==tile*rows||y>=desktopHeight||height!==Math.min(rows,desktopHeight-y))throw Error("Invalid raw band");
+  return {width,height,y,desktopWidth,desktopHeight,generation,tile};
+}
+export class RawScreenRenderer {
+  private context:CanvasRenderingContext2D;
+  private generation=-1;
+  private images=new Map<number,ImageData>();
+  constructor(private canvas:HTMLCanvasElement){
+    const context=canvas.getContext("2d");if(!context)throw Error("Canvas 2D unavailable");this.context=context;
+  }
+  update(h:Record<string,any>,source:Uint8Array){
+    const f=rawFrameGeometry(h,source.length);
+    if(f.generation<this.generation)return false;
+    if(f.generation!==this.generation||this.canvas.width!==f.desktopWidth||this.canvas.height!==f.desktopHeight){
+      this.canvas.width=f.desktopWidth;this.canvas.height=f.desktopHeight;this.images.clear();this.generation=f.generation;
+    }
+    let image=this.images.get(f.tile);
+    if(!image||image.width!==f.width||image.height!==f.height){image=this.context.createImageData(f.width,f.height);this.images.set(f.tile,image);}
+    const rgba=image.data;
+    for(let i=0;i<source.length;i+=4){rgba[i]=source[i+2];rgba[i+1]=source[i+1];rgba[i+2]=source[i];rgba[i+3]=255;}
+    this.context.putImageData(image,0,f.y);
+    return true;
+  }
+}
 /** Packed bi-planar 4:4:4 tiles or a single 4:2:0 AVC picture. */
 export type ScreenDisplay = {width:number;height:number;tiles:number};
 export function validateScreenDisplay(display:ScreenDisplay) {

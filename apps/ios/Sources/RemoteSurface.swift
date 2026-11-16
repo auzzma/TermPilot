@@ -42,6 +42,9 @@ struct RemoteSurface: UIViewRepresentable {
   private var pipeline: MTLRenderPipelineState?
   private var commands: MTLCommandQueue?
   private var tiles: [Int: (JSON, [MTLTexture])] = [:]
+  private var revisions: [Int: Int] = [:]
+  private var rawGeneration = -1
+  private var pendingRender: MTLCommandBuffer?
   private var zoom: CGFloat = 1
   private var offset = CGPoint.zero
   private var startOffset = CGPoint.zero
@@ -128,16 +131,25 @@ struct RemoteSurface: UIViewRepresentable {
     updateCursor()
   }
   func consume() {
+    if let pendingRender, pendingRender.status != .completed && pendingRender.status != .error { return }
     let packets = session.frames
-    session.frames.removeAll()
-    for (tile, packet) in packets {
+    for (tile, packet) in packets.sorted(by: { $0.key < $1.key }) {
+      if let revision = session.frameRevisions[tile], revisions[tile] == revision { continue }
+      if packet.header.text("pixelFormat") == "bgrx" {
+        guard let layout = RawScreenLayout(packet), layout.generation >= rawGeneration else { continue }
+        if layout.generation != rawGeneration { tiles.removeAll(); revisions.removeAll(); rawGeneration = layout.generation }
+      }
       if let textures = makeTextures(packet) {
         tiles[tile] = (packet.header, textures); dirty = true; updated = true
+        revisions[tile] = session.frameRevisions[tile]
       } else { session.videoDiagnostics.videoError = "Video texture upload failed" }
     }
   }
   func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { dirty = true }
   func draw(in view: MTKView) {
+    if let pendingRender, pendingRender.status != .completed && pendingRender.status != .error { return }
+    pendingRender = nil
+    consume()
     let elapsed = Date().timeIntervalSince(started)
     if elapsed >= 1 {
       session.renderedFPS = Double(presented) / elapsed
@@ -155,7 +167,7 @@ struct RemoteSurface: UIViewRepresentable {
     let desktop = session.desktopSize
     for i in tiles.keys.sorted() {
       let (h, textures) = tiles[i]!
-      let top = CGFloat(i * h.number("height"))
+      let top = CGFloat(h.number("originY", i * h.number("height")))
       guard top < desktop.height else { continue }
       encoder.setViewport(
         MTLViewport(
@@ -170,6 +182,7 @@ struct RemoteSurface: UIViewRepresentable {
     }
     encoder.endEncoding()
     buffer.present(drawable)
+    pendingRender = buffer
     buffer.commit()
     if updated {
       presented += 1
@@ -387,7 +400,9 @@ struct RemoteSurface: UIViewRepresentable {
         pixelFormat: raw ? .bgra8Unorm : bi && i == 1 ? .rg8Unorm : .r8Unorm, width: widths[i],
         height: heights[i], mipmapped: false)
       d.storageMode = .shared
-      guard let t = device.makeTexture(descriptor: d) else { return nil }
+      let old = raw ? tiles[h.number("tile")]?.1.first : nil
+      guard let t = old.flatMap({ $0.width == widths[i] && $0.height == heights[i] && $0.pixelFormat == d.pixelFormat ? $0 : nil })
+        ?? device.makeTexture(descriptor: d) else { return nil }
       packet.data.withUnsafeBytes {
         t.replace(
           region: MTLRegionMake2D(0, 0, widths[i], heights[i]), mipmapLevel: 0,

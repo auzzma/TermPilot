@@ -22,6 +22,7 @@ class RemoteCanvas(context:Context,val model:AppModel,val session:Session):GLSur
         var header=JSONObject()
     }
     private val tiles=sortedMapOf<Int,Tile>()
+    private var rawGeneration=-1L
     private val frameAvailable:()->Unit={requestRender()}
     private var reportedError:String?=null
     private var drawn=0
@@ -64,7 +65,7 @@ class RemoteCanvas(context:Context,val model:AppModel,val session:Session):GLSur
         GL.glAttachShader(program,vs);GL.glAttachShader(program,fs);GL.glLinkProgram(program);GL.glDeleteShader(vs);GL.glDeleteShader(fs)
         val linked=IntArray(1);GL.glGetProgramiv(program,GL.GL_LINK_STATUS,linked,0)
         check(linked[0]!=0){GL.glGetProgramInfoLog(program)}
-        tiles.clear()
+        tiles.clear();rawGeneration=-1L
         // Context loss invalidates GPU textures, not the retained decoded frames.
         drawn=0;sampled=System.nanoTime();reportedError=null
         val driver="${GL.glGetString(GL.GL_VENDOR)} / ${GL.glGetString(GL.GL_RENDERER)} / ${GL.glGetString(GL.GL_VERSION)}"
@@ -98,12 +99,21 @@ class RemoteCanvas(context:Context,val model:AppModel,val session:Session):GLSur
     }
     override fun onDrawFrame(gl:GL10?){
         var updated=false
+        if(session.highPerformance){val size=session.desktopRenderSize;if(size.width!=desktopWidth||size.height!=desktopHeight){desktopWidth=size.width;desktopHeight=size.height;post{updateCursor()}}}
         for((key,frame) in session.frames.snapshot()){
             if(tiles[key]?.revision==frame.revision)continue
             val packet=frame.packet
+            if(packet.header.optString("pixelFormat")=="bgrx") {
+                val layout=runCatching{RawFrameLayout.read(packet)}.getOrNull()?:continue
+                if(layout.generation<rawGeneration)continue
+                if(layout.generation!=rawGeneration){
+                    tiles.values.forEach{tile->val ids=tile.planes.map{it.texture}.toIntArray();GL.glDeleteTextures(ids.size,ids,0)}
+                    tiles.clear();rawGeneration=layout.generation
+                }
+            }
             try{val tile=tiles.getOrPut(key){val ids=IntArray(2);GL.glGenTextures(2,ids,0);Tile(ids.map{Plane(it)})};upload(tile.planes[0],packet,0);if(packet.header.optBoolean("biplanar"))upload(tile.planes[1],packet,1);tile.header=packet.header;tile.revision=frame.revision;updated=true
                 if(!packet.header.optBoolean("biplanar")){
-                    val w=packet.header.optInt("width");val h=packet.header.optInt("height")
+                    val w=packet.header.optInt("desktopWidth",packet.header.optInt("width"));val h=packet.header.optInt("desktopHeight",packet.header.optInt("height"))
                     if(w!=desktopWidth||h!=desktopHeight){desktopWidth=w;desktopHeight=h;post{updateCursor()}}
                 }
             }catch(e:Exception){val message="画面缓冲无效：${e.message}";if(reportedError!=message){reportedError=message;android.util.Log.e("TermPilotVideo",message);post{session.videoError=message;model.error=message}}}
@@ -112,8 +122,9 @@ class RemoteCanvas(context:Context,val model:AppModel,val session:Session):GLSur
         GL.glViewport(0,0,surfaceWidth,surfaceHeight);GL.glClearColor(.02f,.025f,.035f,1f);GL.glClear(GL.GL_COLOR_BUFFER_BIT);GL.glUseProgram(program)
         val scale=minOf(surfaceWidth.toFloat()/desktopWidth,surfaceHeight.toFloat()/desktopHeight)*zoom
         val left=(surfaceWidth-desktopWidth*scale)/2+offsetX;val top=(surfaceHeight-desktopHeight*scale)/2+offsetY
-        for((index,tile)in tiles){if(tile.revision<0)continue;val h=tile.header;val w=(h.optInt("width")*scale).toInt();val height=(h.optInt("height")*scale).toInt();val y=top+index*height
-            GL.glViewport(left.toInt(),(surfaceHeight-y-height).toInt(),w,height)
+        for((index,tile)in tiles){if(tile.revision<0)continue;val h=tile.header;val w=(h.optInt("width")*scale).toInt()
+            val origin=h.optInt("originY",index*h.optInt("height"));val y=(surfaceHeight-top-origin*scale).toInt();val bottom=(surfaceHeight-top-(origin+h.optInt("height"))*scale).toInt()
+            GL.glViewport(left.toInt(),bottom,w,y-bottom)
             GL.glActiveTexture(GL.GL_TEXTURE0);GL.glBindTexture(GL.GL_TEXTURE_2D,tile.planes[0].texture);GL.glUniform1i(GL.glGetUniformLocation(program,"image"),0)
             GL.glActiveTexture(GL.GL_TEXTURE1);GL.glBindTexture(GL.GL_TEXTURE_2D,tile.planes[1].texture);GL.glUniform1i(GL.glGetUniformLocation(program,"chroma"),1)
             GL.glUniform1i(GL.glGetUniformLocation(program,"mode"),if(h.optBoolean("biplanar"))1 else 0)

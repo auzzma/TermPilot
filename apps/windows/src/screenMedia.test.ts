@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {screenPackets,validateNV24,validateScreenDisplay} from "./screenMedia";
+import {screenPackets,validateNV24,validateScreenDisplay,RawScreenRenderer,rawFrameGeometry} from "./screenMedia";
 function packet(tile:number){const body=new Uint8Array(1920*272*3);const h={kind:"frame",tile,width:1920,height:272,yStride:1920,uvStride:3840,yLength:1920*272,uLength:1920*272*2,payloadLength:body.length};const header=new TextEncoder().encode(JSON.stringify(h));const bytes=new Uint8Array(4+header.length+body.length);new DataView(bytes.buffer).setUint32(0,header.length);bytes.set(header,4);return bytes;}
 describe('Apple high-performance tiled presentation',()=>{
  it.each([[1280,720],[1920,1080],[2560,1440],[3840,2160]])('validates AVC and padded HEVC at %i × %i',(width,desktopHeight)=>{
@@ -26,4 +26,30 @@ describe('Apple high-performance tiled presentation',()=>{
  });
  it('rejects truncated and malformed lengths before accessing pixels',()=>{const p=packet(0);expect(()=>screenPackets(p.buffer.slice(0,-1))).toThrow();new DataView(p.buffer).setUint32(0,0xffffffff);expect(()=>screenPackets(p.buffer)).toThrow();});
  it('rejects a tile that extends beyond the desktop',()=>{const f=screenPackets(packet(4).buffer)[0];expect(()=>validateNV24(f.header,f.data)).toThrow();});
+});
+
+describe("raw VNC bands", () => {
+  const header=(tile:number,generation=1,desktop=130)=>({pixelFormat:"bgrx",tile,rawGeneration:generation,
+    width:2,height:Math.min(64,desktop-tile*64),yStride:8,originY:tile*64,desktopWidth:2,desktopHeight:desktop});
+  it("updates only changed bands and reuses image storage without clearing the canvas", () => {
+    const calls:{image:ImageData;y:number}[]=[];
+    let allocations=0,resizes=0,width=0,height=0;
+    const context={createImageData:(w:number,h:number)=>{allocations++;return {width:w,height:h,data:new Uint8ClampedArray(w*h*4)};},
+      putImageData:(image:ImageData,_x:number,y:number)=>calls.push({image,y})};
+    const canvas={getContext:()=>context,get width(){return width;},set width(v:number){width=v;resizes++;},
+      get height(){return height;},set height(v:number){height=v;resizes++;}} as unknown as HTMLCanvasElement;
+    const renderer=new RawScreenRenderer(canvas);
+    renderer.update(header(0),new Uint8Array(512).fill(1));
+    renderer.update(header(2),new Uint8Array(16).fill(2));
+    renderer.update(header(0),new Uint8Array(512).fill(3));
+    expect(calls.map(c=>c.y)).toEqual([0,128,0]);expect(allocations).toBe(2);expect(resizes).toBe(2);
+    expect(calls[0].image).toBe(calls[2].image);expect(calls[1].image.data[0]).toBe(2);
+    renderer.update(header(0,2,64),new Uint8Array(512));
+    expect(renderer.update(header(2),new Uint8Array(16))).toBe(false);expect(canvas.height).toBe(64);
+  });
+  it("rejects misaligned bands and accepts legacy full-frame RDP", () => {
+    expect(()=>rawFrameGeometry({...header(2),originY:127},16)).toThrow();
+    expect(()=>rawFrameGeometry({...header(0),rawGeneration:0},512)).toThrow();
+    expect(rawFrameGeometry({pixelFormat:"bgrx",width:2,height:2,yStride:8,tile:0},16).y).toBe(0);
+  });
 });

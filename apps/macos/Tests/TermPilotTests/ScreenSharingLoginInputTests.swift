@@ -95,6 +95,7 @@ final class ScreenSharingLoginInputTests: XCTestCase {
         cfg = json.loads(sys.stdin.buffer.readline())
         emit(kind='connected', width=2, height=2)
         emit(kind='frame', tile=0, width=2, height=2, yStride=8, pixelFormat='bgrx', payload=bytes(16))
+        if (root/'support-resize').exists(): emit(kind='vncCapabilities',canResize=True)
         with (root/'commands.jsonl').open('a',buffering=1) as log:
             for line in sys.stdin:
                 command=json.loads(line)
@@ -102,6 +103,11 @@ final class ScreenSharingLoginInputTests: XCTestCase {
                 log.write(json.dumps(command)+'\n')
                 if command['kind']=='credentialKey' and not (root/'pause').exists():
                     emit(kind='credentialKeySent', requestID=command['requestID'])
+                if command['kind']=='resize' and not (root/'pause-resize').exists():
+                    if (root/'reject-resize').exists(): emit(kind='vncResizeResult',requestID=command['requestID'],accepted=False,code='vncResizeProhibited')
+                    else:
+                        emit(kind='desktopSize',width=command['width'],height=command['height'])
+                        emit(kind='vncResizeResult',requestID=command['requestID'],accepted=True)
         """#.write(to: helper, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
         return (directory, ScreenSharingEngineLaunch(executable: helper, lockDirectory: directory))
@@ -187,10 +193,16 @@ final class ScreenSharingLoginInputTests: XCTestCase {
     }
 
     func testNativeToolbarButtonUsesSessionPassword() async throws {
+        try await checkNativeToolbar(mode: .highPerformance)
+    }
+    func testNativeVNCToolbarButtonUsesSessionPassword() async throws {
+        try await checkNativeToolbar(mode: .standardVNC)
+    }
+    private func checkNativeToolbar(mode: ScreenSharingMode) async throws {
         let (directory, launch) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
         let state = AppState(vaultStore: try VaultStore(databaseURL: directory.appendingPathComponent("vault.sqlite")), screenSharingLaunch: launch)
-        _ = await state.openScreenSharing(hostname: "fixture.invalid", port: 5900, username: "fixture", password: "Toolbar!", audio: false, host: nil)
+        _ = await state.openScreenSharing(hostname: "fixture.invalid", port: 5900, username: "fixture", password: "Toolbar!", audio: false, host: nil, mode: mode)
         let runtime = try XCTUnwrap(state.screenSharingRuntimes.values.first)
         defer { runtime.disconnect() }
         runtime.setClipboardSyncEnabled(false)
@@ -224,7 +236,7 @@ final class ScreenSharingLoginInputTests: XCTestCase {
         settle()
         if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/termpilot-hp-login-toolbar-before.png"))
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/termpilot-\(mode.rawValue)-login-toolbar-before.png"))
         }
         XCTAssertEqual(runtime.lifecycle, .connected)
         XCTAssertTrue(runtime.canSendLoginPassword)
@@ -247,13 +259,13 @@ final class ScreenSharingLoginInputTests: XCTestCase {
         settle()
         if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
             view.cacheDisplay(in: view.bounds, to: bitmap)
-            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/termpilot-hp-login-toolbar.png"))
+            try bitmap.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "/tmp/termpilot-\(mode.rawValue)-login-toolbar.png"))
         }
         runtime.setVisible(false)
         XCTAssertNil(runtime.beginLoginPasswordInput())
     }
 
-    func testLoginIsUnavailableForDisconnectedStandardVNCAndRDP() async throws {
+    func testStandardVNCLoginUsesAcknowledgementsButRDPRemainsUnavailable() async throws {
         let (directory, launch) = try fixture()
         defer { try? FileManager.default.removeItem(at: directory) }
         for mode in [ScreenSharingMode.standardVNC, .rdp] {
@@ -266,9 +278,51 @@ final class ScreenSharingLoginInputTests: XCTestCase {
             }
             runtime.connect(password: "fixture", launch: launch)
             try await waitUntil { runtime.lifecycle == .connected && runtime.hasReceivedFrame }
-            XCTAssertFalse(runtime.canSendLoginPassword)
-            XCTAssertNil(runtime.beginLoginPasswordInput())
+            if mode == .standardVNC {
+                XCTAssertTrue(runtime.canSendLoginPassword)
+                let operation = try XCTUnwrap(runtime.beginLoginPasswordInput())
+                await runtime.enterLoginPassword("VNC!é", operation: operation)
+                XCTAssertEqual(enteredKeys(directory), expectedKeys("VNC!é"))
+                runtime.setVisible(false)
+                XCTAssertNil(runtime.beginLoginPasswordInput())
+            } else {
+                XCTAssertFalse(runtime.canSendLoginPassword)
+                XCTAssertNil(runtime.beginLoginPasswordInput())
+            }
             runtime.disconnect()
         }
+    }
+
+    func testVNCResolutionWaitsForCapabilityAndServerConfirmation() async throws {
+        let (directory, launch) = try fixture()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var descriptor = SessionDescriptor(kind:.screenSharing,title:"VNC fixture",hostname:"fixture.invalid")
+        descriptor.screenSharingMode = .standardVNC
+        let runtime = ScreenSharingSessionRuntime(descriptor:descriptor,pasteboard:NSPasteboard(name:.init(UUID().uuidString)))
+        defer { runtime.disconnect() }
+        runtime.connect(password:"fixture",launch:launch)
+        try await waitUntil { runtime.hasReceivedFrame }
+        XCTAssertFalse(runtime.canResizeVNC)
+        runtime.resizeVNC(.fullHD); XCTAssertFalse(runtime.vncResizeInProgress)
+        runtime.disconnect()
+        try Data().write(to:directory.appendingPathComponent("support-resize"))
+        runtime.connect(password:"fixture",launch:launch)
+        try await waitUntil { runtime.canResizeVNC }
+        try Data().write(to:directory.appendingPathComponent("reject-resize"))
+        runtime.resizeVNC(.fullHD)
+        try await waitUntil { !runtime.vncResizeInProgress }
+        XCTAssertEqual(runtime.desktopSize,CGSize(width:2,height:2))
+        XCTAssertEqual(runtime.vncResizeStatus,"The remote server does not permit resolution changes.")
+        try FileManager.default.removeItem(at:directory.appendingPathComponent("reject-resize"))
+        runtime.resizeVNC(.fullHD)
+        try await waitUntil { !runtime.vncResizeInProgress }
+        XCTAssertEqual(runtime.desktopSize,CGSize(width:1920,height:1080))
+        try Data().write(to:directory.appendingPathComponent("pause-resize"))
+        runtime.vncResizeTimeout = .milliseconds(80)
+        runtime.resizeVNC(.hd)
+        try await waitUntil { !runtime.vncResizeInProgress }
+        XCTAssertFalse(runtime.canResizeVNC)
+        XCTAssertEqual(runtime.desktopSize,CGSize(width:1920,height:1080))
+        XCTAssertEqual(runtime.vncResizeStatus,"The server did not confirm the resolution. Reconnect before retrying.")
     }
 }

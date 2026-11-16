@@ -1,6 +1,12 @@
 use std::time::Duration;
 use tokio::time::{sleep_until, Instant};
 
+pub(super) fn valid_credential_key(code: u32) -> bool {
+    code == 0xff0d || (0x20..=0x7e).contains(&code) || (0xa0..=0xff).contains(&code)
+        || (0x01000100..=0x0110ffff).contains(&code)
+            && char::from_u32(code & 0x00ffffff).is_some_and(|c| !c.is_control() && !matches!(c, '\u{2028}' | '\u{2029}'))
+}
+
 /// Apple screen sharing can drop synthetic down/up events delivered together.
 /// Keep transitions apart at the socket writer, where IPC buffering cannot undo
 /// the spacing. Physical typing already exceeds this interval in most cases.

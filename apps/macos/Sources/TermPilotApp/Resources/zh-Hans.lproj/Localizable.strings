@@ -1288,3 +1288,15 @@
 "Retrying Remote Video" = "未收到远程画面，正在重新连接";
 
 "The remote Mac connected but no video arrived. Reconnect or check the remote sharing service and network." = "已连接远端 Mac，但仍未收到画面。请重连，或检查远端共享服务和网络。";
+
+"Change resolution in the remote system settings unless the VNC server supports remote resizing." = "远端未提供分辨率调整能力，请在远端系统设置中修改。";
+"Requesting remote resolution…" = "正在请求修改远端分辨率…";
+"The connection is unavailable. Reconnect before changing resolution." = "连接不可用，请重连后调整分辨率。";
+"The server did not confirm the resolution. Reconnect before retrying." = "远端未确认分辨率，请重连后重试。";
+"Resolution changes require approval by the remote VNC server." = "分辨率修改须由远端 VNC 服务确认。";
+"This display layout cannot be resized here. Change it in the remote system settings." = "当前显示器布局暂不支持调整，请在远端系统设置中修改。";
+"Waiting for the remote system to apply the resolution…" = "正在等待远端系统应用分辨率…";
+"The remote server confirmed the resolution change." = "远端已确认修改分辨率。";
+"The remote server does not permit resolution changes." = "远端服务不允许修改分辨率。";
+"The remote server lacks resources for this resolution." = "远端资源不足，无法使用此分辨率。";
+"The remote server rejected this resolution. Try another size." = "远端拒绝了此分辨率，请尝试其他尺寸。";

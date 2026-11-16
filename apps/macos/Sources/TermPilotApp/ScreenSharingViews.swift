@@ -51,7 +51,7 @@ struct ScreenSharingPane: View {
                 Label(runtime.descriptor.title, systemImage: "display.2").lineLimit(1)
                 Spacer()
                 if runtime.isActive {
-                    if !runtime.isStandardVNC && !runtime.isRDP {
+                    if !runtime.isRDP {
                         Button(AppLocalization.string("Enter Credential Password and Log In")) {
                             Task { await state.enterScreenSharingLoginPassword(sessionID: runtime.descriptor.id) }
                         }
@@ -95,6 +95,24 @@ struct ScreenSharingPane: View {
                             }
                         } label: { Image(systemName: "display") }
                     }
+                }
+                if runtime.isStandardVNC {
+                    Menu {
+                        Text("\(Int(runtime.desktopSize.width)) × \(Int(runtime.desktopSize.height))")
+                        Divider()
+                        ForEach(HighPerformanceResolution.allCases, id: \.self) { resolution in
+                            Button { runtime.resizeVNC(resolution) } label: {
+                                if Int(runtime.desktopSize.width) == resolution.width && Int(runtime.desktopSize.height) == resolution.height {
+                                    Label(resolution.title, systemImage: "checkmark")
+                                } else { Text(resolution.title) }
+                            }.disabled(!runtime.canResizeVNC)
+                        }
+                        Divider()
+                        Text(AppLocalization.string(runtime.vncResizeStatus))
+                        Button("全屏") { NSApp.keyWindow?.toggleFullScreen(nil) }
+                    } label: { Image(systemName: "display") }
+                    .help(AppLocalization.string(runtime.vncResizeStatus))
+                    .accessibilityIdentifier("vnc-resolution")
                 }
                 if !runtime.isStandardVNC && !runtime.isRDP {
                     Menu {
@@ -162,6 +180,9 @@ struct ScreenSharingPane: View {
                     Text(AppLocalization.string(runtime.loginPasswordStatus)).lineLimit(1)
                         .help(AppLocalization.string(runtime.loginPasswordStatus))
                         .accessibilityIdentifier("screen-sharing-login-password-status")
+                }
+                if runtime.isStandardVNC && runtime.vncResizeNotice {
+                    Text(AppLocalization.string(runtime.vncResizeStatus)).lineLimit(1)
                 }
                 if runtime.isRDP && !runtime.status.isEmpty {
                     Text(verbatim: runtime.status).lineLimit(1).help(runtime.status)

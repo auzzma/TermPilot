@@ -60,6 +60,14 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
     @Published public var certificatePrompt: RDPCertificatePrompt?
     @Published public private(set) var desktopSize = CGSize(width: 1920, height: 1080)
     @Published public private(set) var highPerformanceResolution: HighPerformanceResolution = .fullHD
+    @Published public private(set) var vncResizeSupported = false
+    @Published public private(set) var vncResizeInProgress = false
+    @Published public private(set) var vncResizeNotice = false
+    @Published public private(set) var vncResizeStatus = "Change resolution in the remote system settings unless the VNC server supports remote resizing."
+    private var vncResizeRequest: String?
+    private var vncResizeTask: Task<Void, Never>?
+    private var vncResizeTimedOut = false
+    var vncResizeTimeout: Duration = .seconds(15)
     @Published public private(set) var lifecycle: SessionLifecycle = .disconnected
     @Published public private(set) var hasReceivedFrame = false
     @Published public private(set) var decoderName = ""
@@ -137,7 +145,7 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
     }
 
     public var canSendLoginPassword: Bool {
-        !isStandardVNC && !isRDP && lifecycle == .connected && hasReceivedFrame && visible
+        !isRDP && lifecycle == .connected && hasReceivedFrame && visible && !vncResizeInProgress
     }
     public func beginLoginPasswordInput() -> UUID? {
         guard canSendLoginPassword, !isEnteringLoginPassword else { return nil }
@@ -149,6 +157,30 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
     }
     public func loginPasswordInputFailed(_ message: String, operation: UUID) {
         loginInput.fail(message, operation: operation)
+    }
+
+    public var canResizeVNC: Bool {
+        isStandardVNC && vncResizeSupported && !vncResizeTimedOut && !vncResizeInProgress
+            && lifecycle == .connected && hasReceivedFrame
+    }
+    public func resizeVNC(_ resolution: HighPerformanceResolution) {
+        guard canResizeVNC else { return }
+        releaseInput()
+        let id = UUID().uuidString
+        vncResizeNotice = true
+        vncResizeRequest = id; vncResizeInProgress = true
+        vncResizeStatus = "Requesting remote resolution…"
+        guard send(["kind":"resize", "width":resolution.width, "height":resolution.height, "requestID":id]) else {
+            vncResizeInProgress = false; vncResizeRequest = nil
+            vncResizeStatus = "The connection is unavailable. Reconnect before changing resolution."
+            return
+        }
+        vncResizeTask = Task { [weak self, vncResizeTimeout] in
+            do { try await Task.sleep(for: vncResizeTimeout) } catch { return }
+            guard let self, self.vncResizeRequest == id else { return }
+            self.vncResizeInProgress = false; self.vncResizeTimedOut = true
+            self.vncResizeStatus = "The server did not confirm the resolution. Reconnect before retrying."
+        }
     }
 
     public func connectionFailed(_ message: String) { disconnect(); connectionDiagnostics = ""; fail(message) }
@@ -334,6 +366,9 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
     }
 
     public func disconnect() {
+        vncResizeTask?.cancel(); vncResizeTask = nil; vncResizeRequest = nil
+        vncResizeSupported = false; vncResizeInProgress = false; vncResizeTimedOut = false; vncResizeNotice = false
+        vncResizeStatus = "Change resolution in the remote system settings unless the VNC server supports remote resizing."
         finishFilePromises()
         generation = UUID()
         watchdog?.cancel(); watchdog = nil
@@ -576,6 +611,26 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
     private func receive(_ event: ScreenSharingMessage, payload: Data, generation id: UUID) {
         guard generation == id else { return }
         switch event.kind {
+        case "vncCapabilities":
+            guard isStandardVNC else { return }
+            vncResizeSupported = event.canResize == true
+            if vncResizeRequest == nil {
+                vncResizeStatus = vncResizeSupported ? "Resolution changes require approval by the remote VNC server."
+                    : "This display layout cannot be resized here. Change it in the remote system settings."
+            }
+        case "vncResizeResult":
+            guard isStandardVNC, let request = vncResizeRequest, event.requestID == request else { return }
+            if event.pending == true { vncResizeStatus = "Waiting for the remote system to apply the resolution…"; return }
+            vncResizeTask?.cancel(); vncResizeTask = nil; vncResizeRequest = nil; vncResizeInProgress = false; vncResizeTimedOut = false
+            if event.accepted == true { vncResizeStatus = "The remote server confirmed the resolution change." }
+            else {
+                switch event.code {
+                case "vncResizeProhibited": vncResizeStatus = "The remote server does not permit resolution changes."
+                case "vncResizeResources": vncResizeStatus = "The remote server lacks resources for this resolution."
+                case "vncResizeUnsupported": vncResizeStatus = "Change resolution in the remote system settings unless the VNC server supports remote resizing."
+                default: vncResizeStatus = "The remote server rejected this resolution. Try another size."
+                }
+            }
         case "credentialKeySent": if let requestID = event.requestID { loginInput.acknowledge(requestID) }
         case "certificate":
             watchdog?.cancel()

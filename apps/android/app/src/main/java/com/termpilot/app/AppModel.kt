@@ -15,6 +15,14 @@ import java.util.UUID
 
 class Session(val id:Long,val host:JSONObject,val protocol:String,val terminal:String) {
     internal val commandQueue=SessionCommandQueue()
+    internal val desktopControls=MobileDesktopControls()
+    internal var sourceHost=host
+    internal var savedHost=false
+    internal val highPerformance get()=protocol=="screen"&&host.optString("mode")=="highPerformance"
+    var isClosing by mutableStateOf(false)
+    internal var desktopSize by mutableStateOf(DesktopResolution(1920,1080))
+    @Volatile internal var desktopRenderSize=DesktopResolution(1920,1080)
+    internal fun receiveDesktopSize(e:JSONObject){val w=e.optInt("width");val h=e.optInt("height");if(w in 1..16384&&h in 1..16384){desktopSize=DesktopResolution(w,h);desktopRenderSize=desktopSize}}
     var status by mutableStateOf("连接中")
     var controlKey by mutableStateOf(false)
     var altKey by mutableStateOf(false)
@@ -56,7 +64,10 @@ class Session(val id:Long,val host:JSONObject,val protocol:String,val terminal:S
     val downloads = mutableStateListOf<File>()
     var remoteFiles by mutableStateOf<List<String>>(emptyList())
     var remoteClipboard by mutableStateOf("")
-    var activePanel by mutableStateOf("terminal")
+    private var panel by mutableStateOf("terminal")
+    var activePanel:String
+        get()=panel
+        set(value){panel=value;if(value!="terminal")desktopControls.cancelLogin()}
     var selectedTool by mutableStateOf("monitor")
     var toolsReturnPanel = "terminal"
     var localDrag = false
@@ -77,7 +88,10 @@ class AppModel(app:Application):AndroidViewModel(app) {
     val records=mutableStateMapOf<String,List<JSONObject>>()
     val sessions=mutableStateListOf<Session>()
     val incomingFiles=mutableStateListOf<Uri>()
-    var selected by mutableStateOf<Long?>(null)
+    private var selectedID by mutableStateOf<Long?>(null)
+    var selected:Long?
+        get()=selectedID
+        set(value){if(value!=selectedID)current?.desktopControls?.cancelLogin();selectedID=value}
     var error by mutableStateOf<String?>(null)
     var prompt by mutableStateOf<Prompt?>(null)
     var settings by mutableStateOf(JSONObject())
@@ -93,7 +107,7 @@ class AppModel(app:Application):AndroidViewModel(app) {
     var fontSize by mutableFloatStateOf(app.getSharedPreferences("TermPilot",0).getFloat("fontSize",14f))
     fun setTerminalFont(value:Float){launch{call(obj("method" to "sync.preferences","values" to obj("fontSize" to value.coerceIn(10f,28f))));fontSize=value.coerceIn(10f,28f);getApplication<Application>().getSharedPreferences("TermPilot",0).edit().putFloat("fontSize",fontSize).apply()}}
     var isForeground=true
-    fun foreground(active:Boolean){isForeground=active;sessions.filter{it.protocol!="ssh"}.forEach{s->if(!active)s.audio.stop();launch{if(!active)send(s.id,obj("kind" to "release"));if(s.protocol=="rdp")send(s.id,obj("kind" to "clipboardActive","active" to (active&&s.id==selected&&s.audioEnabled)));send(s.id,obj("kind" to "audio","enabled" to (active&&s.id==selected&&s.audioEnabled)))}}}
+    fun foreground(active:Boolean){isForeground=active;if(!active)sessions.forEach{it.desktopControls.cancelLogin()};sessions.filter{it.protocol!="ssh"}.forEach{s->if(!active)s.audio.stop();launch{if(!active)send(s.id,obj("kind" to "release"));if(s.protocol=="rdp")send(s.id,obj("kind" to "clipboardActive","active" to (active&&s.id==selected&&s.audioEnabled)));send(s.id,obj("kind" to "audio","enabled" to (active&&s.id==selected&&s.audioEnabled)))}}}
     val current:Session? get()=sessions.find{it.id==selected}
     internal val remoteTasksStarting=mutableSetOf<String>()
     internal val backgroundTransfers=mutableMapOf<String,TransferBackground.Work>()
@@ -125,26 +139,34 @@ class AppModel(app:Application):AndroidViewModel(app) {
     suspend fun delete(collection:String,id:String){call(obj("method" to "vault.delete","collection" to collection,"id" to id));reload()}
     fun chooseVideoCodec(value:String){val codec=if(value=="h265") "h265" else "h264";launch{call(obj("method" to "sync.preferences","values" to obj("videoCodec" to codec)));videoCodec=codec;getApplication<Application>().getSharedPreferences("TermPilot",0).edit().putString("videoCodec",codec).apply()}}
     fun appearance(theme:String=this.theme,fps:Int=this.fps){launch{call(obj("method" to "sync.preferences","values" to obj("theme" to theme,"fps" to fps)));this@AppModel.theme=theme;this.fps=fps;getApplication<Application>().getSharedPreferences("TermPilot",0).edit().putString("theme",theme).putInt("fps",fps).apply();sessions.filter{it.protocol!="ssh"}.forEach{s->launch{send(s.id,obj("kind" to "frameRate","fps" to fps))}}}}
-    suspend fun connect(saved:JSONObject){
-        val host=call(obj("method" to "resolveConnection","host" to saved,"credentials" to JSONArray(records["credentials"] ?: emptyList<JSONObject>()),"proxyProfiles" to JSONArray(records["proxies"] ?: emptyList<JSONObject>()))).getJSONObject("host")
+    internal suspend fun resolveDesktopConnection(saved:JSONObject):Pair<JSONObject,JSONObject>{
+        val credentials=call(obj("method" to "vault.list","collection" to "credentials")).optJSONArray("items")?:JSONArray()
+        val proxies=call(obj("method" to "vault.list","collection" to "proxies")).optJSONArray("items")?:JSONArray()
+        val host=call(obj("method" to "resolveConnection","host" to saved,"credentials" to credentials,"proxyProfiles" to proxies)).getJSONObject("host")
         val config=JSONObject(host.toString())
-        val kind=when(host.optString("connectionKind","ssh")){"screenSharing"->"screen";"rdp"->"rdp";else->"ssh"}
-        if(kind!="ssh"){
+        if(host.optString("connectionKind","ssh")!="ssh"){
             val profile=call(obj("method" to "vault.get","collection" to "screenSharing","id" to host.optString("id"))).optJSONObject("item")
             profile?.keys()?.forEach{config.put(it,profile.get(it))}
         }
-        if(host.opt("credentialID") is String&&host.optString("credentialID").isNotEmpty()){
-            config.put("username",host.optString("username")).put("password",host.opt("password"))
-        }
+        if(host.opt("credentialID") is String&&host.optString("credentialID").isNotEmpty())config.put("username",host.optString("username")).put("password",host.opt("password"))
+        return host to config
+    }
+    internal suspend fun connect(saved:JSONObject,resolution:DesktopResolution?=null,prepared:Pair<JSONObject,JSONObject>?=null){
+        val (host,config)=prepared?:resolveDesktopConnection(saved)
+        val kind=when(host.optString("connectionKind","ssh")){"screenSharing"->"screen";"rdp"->"rdp";else->"ssh"}
         config.put("host",host.optString("hostname")).put("proxy",host.opt("proxyConfiguration"))
             .put("knownHostsFile",File(runtime!!.directory,"known_hosts").path)
             .put("privateKey",host.opt("identityKey")).put("sessionID",UUID.randomUUID().toString().uppercase())
             .put("lockDirectory",File(runtime!!.directory,"screen-lock").path).put("frameRate",fps).put("videoCodec",videoCodec).put("audio",true).put("clipboardSync",true).put("mode",config.optString("mode","standardVNC"))
             .put("clipboardDirectory",File(runtime!!.directory,"Transfers").apply{mkdirs()}.path)
         config.put("cacheDirectory",config.optString("clipboardDirectory"))
+        if(kind=="screen")config.put("port",host.optInt("port",5900))
+        if(kind=="screen"&&config.optString("mode")=="highPerformance"&&resolution!=null)config.put("width",resolution.width).put("height",resolution.height)
         val command=if(kind=="ssh")obj("type" to "connect","config" to config,"cols" to 80,"rows" to 24) else config.put("kind","connect")
         val reply=call(obj("method" to "session.open","protocol" to kind,"terminalReplies" to true,"command" to command))
         val session=Session(reply.getLong("session"),config,kind,reply.optString("terminal"))
+        session.sourceHost=JSONObject(saved.toString());session.savedHost=records["hosts"]?.any{it.optString("id")==saved.optString("id")&&saved.optString("id").isNotEmpty()}==true
+        bindDesktopControls(session)
         sessions.add(session);selected=session.id;recordConnection(session,false)
     }
     suspend fun recordConnection(s:Session,ended:Boolean){
@@ -154,14 +176,20 @@ class AppModel(app:Application):AndroidViewModel(app) {
         records["history"]=call(obj("method" to "vault.list","collection" to "history")).objects("items")
     }
     suspend fun send(session:Long,command:JSONObject)=sendSequence(session,listOf(command))
-    internal suspend fun sendSequence(session:Long,commands:List<JSONObject>){
-        val dispatch:suspend (JSONObject)->Unit={command->call(obj("method" to "session.send","session" to session,"command" to command));Unit}
-        val queue=sessions.firstOrNull{it.id==session}?.commandQueue
+    internal suspend fun sendSequence(session:Long,commands:List<JSONObject>,desktopAction:Boolean=false){
+        val s=sessions.firstOrNull{it.id==session}
+        val dispatch:suspend (JSONObject)->Unit={command->
+            if(s?.isClosing==true||(desktopAction&&s?.desktopControls?.allows(command)!=true))throw CancellationException()
+            if(!desktopAction&&s?.desktopControls?.loginBusy==true&&command.optString("kind")=="release")s.desktopControls.cancelLogin()
+            if(desktopAction||s?.desktopControls?.loginBusy!=true||command.optString("kind") !in listOf("key","text","pointer","scroll","clipboardSend","dragEnter","dragDrop","dragMove"))call(obj("method" to "session.send","session" to session,"command" to command))
+            Unit
+        }
+        val queue=s?.commandQueue
         if(queue!=null)queue.send(commands,dispatch)else commands.forEach{dispatch(it)}
     }
     fun text(s:Session,text:String){var value=text;if(s.protocol=="ssh"&&value.length==1&&value[0].code in 32..127){if(s.controlKey){value=(value[0].code and 31).toChar().toString();s.controlKey=false};if(s.altKey){value="\u001b"+value;s.altKey=false}};launch{send(s.id,if(s.protocol=="ssh")obj("type" to "data","data" to Base64.encodeToString(value.toByteArray(),Base64.NO_WRAP)) else obj("kind" to "text","text" to value))}}
-    suspend fun reconnect(s:Session){val saved=records["hosts"]?.find{it.optString("id")==s.host.optString("id")}?:s.host;close(s);connect(saved)}
-    suspend fun close(s:Session){runCatching{recordConnection(s,true)};endRemoteTransfers(s);s.audio.stop();s.ai?.let{call(obj("method" to "session.close","session" to it))};call(obj("method" to "session.close","session" to s.id));sessions.remove(s);if(selected==s.id)selected=sessions.lastOrNull()?.id}
+    suspend fun reconnect(s:Session){val saved=records["hosts"]?.find{it.optString("id")==s.host.optString("id")}?:s.host;close(s);connect(saved,if(s.highPerformance)DesktopResolution(s.host.optInt("width",1920),s.host.optInt("height",1080))else null)}
+    suspend fun close(s:Session){if(s.isClosing)return;s.isClosing=true;s.desktopControls.stop();runCatching{recordConnection(s,true)};endRemoteTransfers(s);s.audio.stop();s.ai?.let{call(obj("method" to "session.close","session" to it))};call(obj("method" to "session.close","session" to s.id));sessions.remove(s);if(selected==s.id)selected=sessions.lastOrNull()?.id}
     suspend fun request(session:Long,command:JSONObject,id:String,timeout:Long=180000):JSONObject{
         val key="$session:$id";val deferred=CompletableDeferred<JSONObject>();pending[key]=deferred
         try{send(session,command);return withTimeout(timeout){deferred.await()}}finally{pending.remove(key)}
@@ -214,8 +242,10 @@ class AppModel(app:Application):AndroidViewModel(app) {
             "execReady"->s.execReady=true
             "sftpResponse"->{val r=e.getJSONObject("message");val rid=r.optString("id");if(r.optString("event")=="progress"){backgroundTransfers[rid]?.report(r.optLong("transferred"),r.optLong("total"));s.transfers[rid]?.let{old->s.transfers[rid]=JSONObject(old.toString()).put("total",r.optLong("total")).put("transferred",r.optLong("transferred")).put("rate",s.transferRate(rid,r.optLong("transferred")))}}else complete(id,rid,r)}
             "hostKeyPrompt","credentialPrompt","certificate","approval","form"->{val p=Prompt(id,e);if(prompt==null)prompt=p else prompts.addLast(p)}
+            "credentialKeySent","vncCapabilities","vncResizeResult"->if(id==s.id)s.desktopControls.receive(e)
+            "connected","desktopSize"->if(id==s.id)s.receiveDesktopSize(e)
             "status"->s.status=e.optString("stage")
-            "frame"->{s.lastFrameAt=System.nanoTime();s.frames.publish(packet);if(!s.connected){s.historySucceeded=true;launch{recordConnection(s,false)}};s.connected=true;s.status="已连接"}
+            "frame"->{if(!s.frames.publish(packet))return;s.lastFrameAt=System.nanoTime();if(e.optString("pixelFormat")=="bgrx")s.receiveDesktopSize(obj("width" to e.optInt("desktopWidth",e.optInt("width")),"height" to e.optInt("desktopHeight",e.optInt("height"))));if(!s.connected){s.historySucceeded=true;launch{recordConnection(s,false)}};s.connected=true;s.status="已连接"}
             "audio"->if(isForeground&&s.id==selected&&s.audioEnabled)s.audio.append(packet.payload)
             "performance"->{s.stats=e;if(System.nanoTime()-s.lastFrameAt>1_000_000_000L)s.renderedFPS=0.0}
             "mediaDiagnostics"->s.mediaDiagnostics=e
@@ -228,8 +258,8 @@ class AppModel(app:Application):AndroidViewModel(app) {
             "clipboardChanged"->send(id,obj("kind" to "clipboardFetch","requestID" to UUID.randomUUID().toString()))
             "clipboard"->s.remoteClipboard=e.optString("text",String(packet.payload))
             "clipboardFiles"->{val paths=e.optJSONArray("paths")?:JSONArray(String(packet.payload));for(i in 0 until paths.length())s.downloads.add(File(paths.getString(i)));recordReceivedFiles(s,(0 until paths.length()).map{paths.getString(it)})}
-            "error"->error=e.optString("message",e.optString("code","连接失败"))
-            "sessionEnded","disconnected","exit"->{launch{recordConnection(s,true)};endRemoteTransfers(s);s.audio.stop();s.connected=false;s.latencyMilliseconds=null;s.status="已断开";pending.filterKeys{it.startsWith("$id:")}.values.forEach{it.completeExceptionally(IllegalStateException("连接已断开，操作不会自动重试"))}}
+            "error"->{if(id==s.id)s.desktopControls.cancelLogin();error=e.optString("message",e.optString("code","连接失败"))}
+            "sessionEnded","disconnected","exit"->{if(id==s.id)s.desktopControls.stop();launch{recordConnection(s,true)};endRemoteTransfers(s);s.audio.stop();s.connected=false;s.latencyMilliseconds=null;s.status="已断开";pending.filterKeys{it.startsWith("$id:")}.values.forEach{it.completeExceptionally(IllegalStateException("连接已断开，操作不会自动重试"))}}
         }
     }
     private fun complete(session:Long,id:String,response:JSONObject){pending.remove("$session:$id")?.let{if(response.optBoolean("ok"))it.complete(response.optJSONObject("result")?:JSONObject().put("items",response.opt("result")))else it.completeExceptionally(IllegalStateException(response.optString("error","操作失败")))}}
@@ -259,5 +289,5 @@ class AppModel(app:Application):AndroidViewModel(app) {
         }catch(e:Exception){obj("ok" to false,"error" to e.message)}
         send(checkNotNull(s.ai),obj("id" to UUID.randomUUID().toString(),"method" to "interaction.reply","params" to obj("requestId" to event.optString("requestId"),"value" to answer)))
     }
-    override fun onCleared(){sessions.forEach{it.audio.stop()};runtime?.close();super.onCleared()}
+    override fun onCleared(){sessions.forEach{it.desktopControls.stop();it.audio.stop()};runtime?.close();super.onCleared()}
 }
