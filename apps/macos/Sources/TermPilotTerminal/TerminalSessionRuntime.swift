@@ -262,6 +262,12 @@ final class AutoStartingTerminalView:
         removeInjectedContextMenuItems(from: menu)
     }
 
+    override func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+        super.rangeChanged(source: source, startY: startY, endY: endY)
+        // SwiftTerm has now applied the remote echo and positioned its caret.
+        runtime?.schedulePasswordPromptCursorUpdate()
+    }
+
     override func dataReceived(slice: ArraySlice<UInt8>) {
         let displayBytes = runtime?.processOutputForDisplay(slice) ?? Array(slice)
         guard !displayBytes.isEmpty else {
@@ -303,6 +309,7 @@ final class AutoStartingTerminalView:
     override func layout() {
         super.layout()
         autocompleteOverlay?.updateLayout()
+        runtime?.schedulePasswordPromptCursorUpdate()
     }
 
     func currentRenderedLine() -> String? {
@@ -967,7 +974,33 @@ public final class TerminalSessionRuntime: NSObject, ObservableObject {
     @Published public private(set) var launchRequested: Bool
     @Published public private(set) var connectionLog: [ConnectionLogEntry]
     @Published public private(set) var hostKeyPrompt: SSHHostKeyPrompt?
-    @Published public private(set) var passwordPromptRequest: PasswordPromptRequest?
+    @Published public private(set) var passwordPromptRequest: PasswordPromptRequest? {
+        didSet {
+            terminalView?.notifyUpdateChanges = passwordPromptRequest != nil
+            if passwordPromptRequest == nil {
+                if passwordPromptCursorRect != nil { passwordPromptCursorRect = nil }
+            } else {
+                schedulePasswordPromptCursorUpdate()
+            }
+        }
+    }
+    @Published public private(set) var passwordPromptCursorRect: CGRect?
+    private var cursorUpdateScheduled = false
+
+    fileprivate func schedulePasswordPromptCursorUpdate() {
+        guard passwordPromptRequest != nil, !cursorUpdateScheduled else { return }
+        cursorUpdateScheduled = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            cursorUpdateScheduled = false
+            guard passwordPromptRequest != nil, let view = terminalView,
+                  let pane = view.superview as? TerminalContentInsetView else { return }
+            let rect = pane.convert(view.termPilotCursorRect, from: view)
+            let anchor = CGRect(x: rect.minX, y: pane.bounds.maxY - rect.maxY,
+                                width: rect.width, height: rect.height)
+            if passwordPromptCursorRect != anchor { passwordPromptCursorRect = anchor }
+        }
+    }
 
     public var surfaceIdentity: String {
         "\(descriptor.id.uuidString)-\(generation)"
@@ -1082,6 +1115,7 @@ public final class TerminalSessionRuntime: NSObject, ObservableObject {
         view.updateAutocomplete(autocompleteController.presentation)
         view.setAccessibilityLabel("Terminal: \(descriptor.title)")
         terminalView = view
+        view.notifyUpdateChanges = passwordPromptRequest != nil
         return view
     }
 

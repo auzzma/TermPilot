@@ -5,7 +5,33 @@ struct PasswordPromptAssistOverlay: View {
     let request: PasswordPromptRequest
     @ObservedObject var runtime: TerminalSessionRuntime
 
+    let caret: CGRect
+
     var body: some View {
+        GeometryReader { geometry in
+            let frame = Self.panelFrame(caret: caret, area: geometry.size, count: request.items.count)
+            panel
+                .frame(width: frame.width, height: frame.height)
+                .position(x: frame.midX, y: frame.midY)
+        }
+    }
+
+    static func panelFrame(caret: CGRect, area: CGSize, count: Int) -> CGRect {
+        let margin: CGFloat = 8
+        let gap: CGFloat = 6
+        let width = min(340, max(0, area.width - 2 * margin))
+        let listHeight = min(190, 10 + CGFloat(count) * 36 + CGFloat(max(0, count - 1)) * 2)
+        let preferredHeight = 66 + listHeight
+        let below = max(0, area.height - margin - caret.maxY - gap)
+        let above = max(0, caret.minY - gap - margin)
+        let showBelow = below >= preferredHeight || below >= above
+        let height = min(preferredHeight, showBelow ? below : above)
+        let x = max(margin, min(caret.minX, area.width - margin - width))
+        let y = showBelow ? caret.maxY + gap : caret.minY - gap - height
+        return CGRect(x: x, y: y, width: width, height: height)
+    }
+
+    private var panel: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "key.fill")
@@ -57,7 +83,7 @@ struct PasswordPromptAssistOverlay: View {
             .padding(.horizontal, 10)
             .frame(minHeight: 30)
         }
-        .frame(minWidth: 260, idealWidth: 300, maxWidth: 340)
+        .clipped()
         .background(
             .regularMaterial,
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)

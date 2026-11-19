@@ -1,3 +1,5 @@
+import AppKit
+@testable import TermPilotApp
 import TermPilotDomain
 import TermPilotRemote
 @testable import TermPilotTerminal
@@ -5,6 +7,50 @@ import TermPilotTestSupport
 import XCTest
 
 final class PasswordPromptAssistTests: XCTestCase {
+    @MainActor
+    func testPasswordPanelFollowsRenderedCaretInsideInsetTerminal() async throws {
+        let runtime = makePickerRuntime()
+        let view = runtime.view()
+        let pane = TerminalContentInsetView(terminalView: view, leadingInset: 10)
+        let area = CGSize(width: 640, height: 480)
+        let window = NSWindow(contentRect: CGRect(origin: .zero, size: area),
+                              styleMask: [.borderless], backing: .buffered, defer: true)
+        window.contentView = pane
+        defer { window.contentView = nil }
+        pane.layoutSubtreeIfNeeded()
+        submit("su -", to: runtime)
+        view.dataReceived(slice: Array("密码： ".utf8)[...])
+        let request = try XCTUnwrap(runtime.passwordPromptRequest)
+        func checkPosition(nearBottom: Bool) async throws {
+            // Wait for SwiftTerm's deferred display pass after feeding the PTY output.
+            let clock = ContinuousClock()
+            let deadline = clock.now + .seconds(2)
+            while clock.now < deadline {
+                if let rect = runtime.passwordPromptCursorRect,
+                   rect.minX > 10, (rect.minY > area.height / 2) == nearBottom { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let caret = try XCTUnwrap(runtime.passwordPromptCursorRect)
+            let displayed = pane.convert(view.termPilotCursorRect, from: view)
+            XCTAssertEqual(caret.minX, displayed.minX, accuracy: 0.5)
+            XCTAssertEqual(caret.minY, pane.bounds.maxY - displayed.maxY, accuracy: 0.5)
+            XCTAssertEqual(caret.minY > area.height / 2, nearBottom)
+            let panel = PasswordPromptAssistOverlay.panelFrame(caret: caret, area: area, count: request.items.count)
+            if nearBottom {
+                XCTAssertEqual(panel.maxY, caret.minY - 6)
+                XCTAssertLessThanOrEqual(panel.maxX, area.width - 8)
+            } else {
+                XCTAssertEqual(panel.minX, caret.minX)
+                XCTAssertEqual(panel.minY, caret.maxY + 6)
+            }
+        }
+        try await checkPosition(nearBottom: false)
+        view.feed(text: "\u{1b}[999;999H")
+        try await checkPosition(nearBottom: true)
+        runtime.dismissPasswordPromptAssist()
+        XCTAssertNil(runtime.passwordPromptCursorRect)
+    }
+
     func testDetectorArmsOnlyDirectSudoAndSuCommands() {
         XCTAssertEqual(
             PasswordPromptDetector.commandKind("sudo whoami"),

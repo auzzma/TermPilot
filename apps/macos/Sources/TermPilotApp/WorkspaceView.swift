@@ -674,18 +674,9 @@ private struct SessionPane: View {
                 if shouldShowConnectionLogOverlay && !dismissedConnectionLogOverlay {
                     connectionLogOverlay
                 }
-                if let request = runtime.passwordPromptRequest {
-                    PasswordPromptAssistOverlay(
-                        request: request,
-                        runtime: runtime
-                    )
-                    .padding(.leading, 16)
-                    .padding(.bottom, 44)
-                    .frame(
-                        maxWidth: .infinity,
-                        maxHeight: .infinity,
-                        alignment: .bottomLeading
-                    )
+                if isActive, let request = runtime.passwordPromptRequest,
+                   let caret = runtime.passwordPromptCursorRect {
+                    PasswordPromptAssistOverlay(request: request, runtime: runtime, caret: caret)
                 }
             } else {
                 disconnectedState

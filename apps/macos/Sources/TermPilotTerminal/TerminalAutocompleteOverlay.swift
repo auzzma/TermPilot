@@ -95,6 +95,30 @@ private func updateAutocompleteLayers(
     CATransaction.commit()
 }
 
+extension LocalProcessTerminalView {
+    var termPilotCursorRect: CGRect {
+        if let caret = subviews.first(where: {
+            String(describing: type(of: $0)).contains("CaretView")
+        }) {
+            return caret.frame
+        }
+
+        let cursor = getTerminal().getCursorLocation()
+        let glyph = font.glyph(withName: "W")
+        let width = max(1, ceil(font.advancement(forGlyph: glyph).width))
+        let height = max(
+            1,
+            ceil(font.ascender - font.descender + font.leading)
+        )
+        return CGRect(
+            x: CGFloat(cursor.x) * width,
+            y: bounds.height - CGFloat(cursor.y + 1) * height,
+            width: width,
+            height: height
+        )
+    }
+}
+
 @MainActor
 final class TerminalAutocompleteOverlayView: NSView {
     weak var terminalView: LocalProcessTerminalView?
@@ -105,6 +129,7 @@ final class TerminalAutocompleteOverlayView: NSView {
     private let popupView = TerminalAutocompletePopupView()
     private var presentation = TerminalAutocompletePresentation.empty
     private var needsPresentationUpdate = true
+    private var popupAnchorX: CGFloat?
     private var eventMonitor: Any?
 
     init(terminalView: LocalProcessTerminalView) {
@@ -153,6 +178,9 @@ final class TerminalAutocompleteOverlayView: NSView {
     }
 
     func update(_ presentation: TerminalAutocompletePresentation) {
+        if !presentation.popupVisible {
+            popupAnchorX = nil
+        }
         self.presentation = presentation
         needsPresentationUpdate = true
         updateLayout()
@@ -162,6 +190,7 @@ final class TerminalAutocompleteOverlayView: NSView {
         guard let terminalView, window != nil, !terminalView.isHiddenOrHasHiddenAncestor,
               terminalView.bounds.width > 0, terminalView.bounds.height > 0 else {
             popupView.isHidden = true
+            popupAnchorX = nil
             ghostLabel.isHidden = true
             needsPresentationUpdate = true
             stopMonitoring()
@@ -184,7 +213,7 @@ final class TerminalAutocompleteOverlayView: NSView {
         }
         if frame != terminalView.bounds { frame = terminalView.bounds }
         guard !ghostLabel.isHidden || !popupView.isHidden else { return }
-        let cursorRect = resolvedCursorRect(in: terminalView)
+        let cursorRect = terminalView.termPilotCursorRect
         let font = terminalView.font
 
         if !ghostLabel.isHidden {
@@ -202,8 +231,27 @@ final class TerminalAutocompleteOverlayView: NSView {
         guard !popupView.isHidden else {
             return
         }
-        let desiredSize = popupView.desiredSize(
+        var desiredSize = popupView.desiredSize(
             maximumWidth: max(180, bounds.width - 16),
+            maximumHeight: max(96, bounds.height - 16)
+        )
+        if popupAnchorX == nil {
+            popupAnchorX = min(
+                max(8, cursorRect.minX),
+                max(8, bounds.width - desiredSize.width - 8)
+            )
+        }
+        // Keep the initial horizontal position throughout this presentation.
+        // Grow the panels into the remaining space instead of following the
+        // cursor or shifting left when suggestions/details become wider.
+        // Only a narrower terminal may move the anchor to keep the list usable.
+        let x = min(
+            popupAnchorX ?? 8,
+            max(8, bounds.width - min(240, desiredSize.width) - 8)
+        )
+        popupAnchorX = x
+        desiredSize = popupView.desiredSize(
+            maximumWidth: max(0, bounds.width - x - 8),
             maximumHeight: max(96, bounds.height - 16)
         )
         let gap: CGFloat = 6
@@ -216,10 +264,6 @@ final class TerminalAutocompleteOverlayView: NSView {
                 max(8, aboveY),
                 max(8, bounds.height - desiredSize.height - 8)
             )
-        let x = min(
-            max(8, cursorRect.minX),
-            max(8, bounds.width - desiredSize.width - 8)
-        )
         popupView.frame = CGRect(origin: CGPoint(x: x, y: y), size: desiredSize)
         popupView.needsLayout = true
     }
@@ -229,31 +273,6 @@ final class TerminalAutocompleteOverlayView: NSView {
             NSEvent.removeMonitor(eventMonitor)
             self.eventMonitor = nil
         }
-    }
-
-    private func resolvedCursorRect(
-        in terminalView: LocalProcessTerminalView
-    ) -> CGRect {
-        if let caret = terminalView.subviews.first(where: {
-            String(describing: type(of: $0)).contains("CaretView")
-        }) {
-            return caret.frame
-        }
-
-        let cursor = terminalView.getTerminal().getCursorLocation()
-        let font = terminalView.font
-        let glyph = font.glyph(withName: "W")
-        let width = max(1, ceil(font.advancement(forGlyph: glyph).width))
-        let height = max(
-            1,
-            ceil(font.ascender - font.descender + font.leading)
-        )
-        return CGRect(
-            x: CGFloat(cursor.x) * width,
-            y: bounds.height - CGFloat(cursor.y + 1) * height,
-            width: width,
-            height: height
-        )
     }
 
     private func updateEventMonitor() {
@@ -423,6 +442,7 @@ final class TerminalAutocompletePopupView: NSView {
             ? 0
             : min(
                 280,
+                max(0, bounds.width - min(180, bounds.width) - gap),
                 max(
                     160,
                     bounds.width - minimumListWidth - gap
@@ -430,7 +450,7 @@ final class TerminalAutocompletePopupView: NSView {
             )
         let detailSpacing = detailView.isHidden ? 0 : gap
         let listWidth = max(
-            180,
+            0,
             bounds.width - detailWidth - detailSpacing
         )
         let reservedPanelWidth = panelCount == 0
@@ -439,6 +459,7 @@ final class TerminalAutocompletePopupView: NSView {
                 + CGFloat(panelCount) * gap
         let mainWidth = min(
             preferredMainWidth,
+            listWidth,
             max(180, listWidth - reservedPanelWidth)
         )
         let remainingWidth = max(

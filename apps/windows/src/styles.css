@@ -1705,6 +1705,10 @@ body.is-dragging-tab {
   transform: scale(0.98);
 }
 
+.terminal-surface {
+  position: relative;
+}
+
 .terminal-surface,
 .terminal-mount {
   width: 100%;
@@ -1991,6 +1995,7 @@ body.is-dragging-tab {
 .terminal-autocomplete {
   position: relative;
   width: min(440px, calc(100vw - 36px));
+  min-width: 0;
   max-height: 248px;
   overflow: hidden;
   color: var(--text-autocomplete);
@@ -2091,7 +2096,7 @@ body.is-dragging-tab {
 
 .terminal-autocomplete-subdirectory {
   width: 214px;
-  flex: 0 0 214px;
+  flex: 0 1 214px;
 }
 
 .terminal-autocomplete-subdirectory > button {
@@ -2111,7 +2116,7 @@ body.is-dragging-tab {
 
 .terminal-autocomplete-detail {
   width: min(280px, calc(100vw - 470px));
-  min-width: 180px;
+  min-width: 0;
   max-height: 248px;
   overflow: auto;
   padding: 10px;
@@ -2199,10 +2204,8 @@ body.is-dragging-tab {
 .password-assist {
   position: absolute;
   z-index: 7;
-  right: 14px;
-  bottom: 14px;
   display: grid;
-  width: min(340px, calc(100% - 28px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   color: var(--text-autocomplete);
   background: color-mix(in srgb, var(--bg-autocomplete) 96%, transparent);

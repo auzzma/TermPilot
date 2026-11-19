@@ -178,6 +178,8 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
   const [suggestionIndex, setSuggestionIndex] = useState(-1);
   const [hoveredSuggestionIndex, setHoveredSuggestionIndex] = useState(-1);
+  const popupAnchorRef = useRef<{ sessionId: string; restartToken: number; left: number }>();
+  const [, refreshPopupLayout] = useState(0);
   const [subdirectoryPanels, setSubdirectoryPanels] = useState<
     AutocompleteSubdirectoryPanel[]
   >([]);
@@ -944,9 +946,20 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
     const resizeRequests = latestAsync<{ columns: number; rows: number }>(
       size => invoke("terminal_resize", { sessionId: session.id, ...size }),
       () => { lastColumns = -1; lastRows = -1; });
+    const popupFrames = frameCoalescer<void>(() => {
+      if (activeRef.current && (passwordPromptRef.current ||
+          (autocompleteSettingsRef.current.popup && suggestionsRef.current.length > 0))) {
+        refreshPopupLayout(version => version + 1);
+      }
+    });
+    const cursorMoved = terminal.onCursorMove(() => popupFrames.schedule());
+    const scrolled = terminal.onScroll(() => {
+      if (passwordPromptRef.current) popupFrames.schedule();
+    });
     const resizeFrames = frameCoalescer<void>(() => {
       if (!activeRef.current || !container.isConnected || container.clientWidth <= 0 || container.clientHeight <= 0) return;
       fit.fit();
+      popupFrames.schedule();
       if (!terminalReady || (terminal.cols === lastColumns && terminal.rows === lastRows)) return;
       lastColumns = terminal.cols;
       lastRows = terminal.rows;
@@ -1147,6 +1160,9 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
       resizeDisposed = true;
       resizeObserver.disconnect();
       resizeFrames.cancel();
+      popupFrames.cancel();
+      cursorMoved.dispose();
+      scrolled.dispose();
       resizeRequests.dispose();
       resized.dispose();
       cached.scheduleResize = undefined;
@@ -1332,7 +1348,7 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
     ? terminalCursorPosition(terminalRef.current, containerRef.current)
     : undefined;
   const popupPosition =
-    preferences.autocompletePopup && suggestions.length > 0
+    active && preferences.autocompleteEnabled && preferences.autocompletePopup && suggestions.length > 0
       ? terminalCursorPosition(terminalRef.current, containerRef.current)
       : undefined;
   const detailSuggestion =
@@ -1349,8 +1365,22 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
           Boolean(
             detailSuggestion?.detail && detailSuggestion.source !== "path",
           ),
+          popupAnchorRef.current?.sessionId === session.id &&
+            popupAnchorRef.current.restartToken === restartToken
+            ? popupAnchorRef.current.left
+            : undefined,
         )
       : undefined;
+  useLayoutEffect(() => {
+    // Commit the first visible position; later renders keep this X even when
+    // the cursor wraps or the suggestion/detail panels change width.
+    popupAnchorRef.current = popupLayoutPosition
+      ? { sessionId: session.id, restartToken, left: popupLayoutPosition.left }
+      : undefined;
+  });
+  const passwordPosition = active && passwordPrompt && terminalRef.current && containerRef.current
+    ? passwordPromptPosition(terminalRef.current, containerRef.current, passwordPrompt.items.length)
+    : undefined;
   const submitPasswordCandidate = (id: string) => {
     const candidate = passwordCandidatesRef.current.find(
       (item) => item.id === id,
@@ -1542,7 +1572,7 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
           {ghostText}
         </span>
       ) : null}
-      {preferences.autocompletePopup && suggestions.length > 0 && active ? (
+      {popupLayoutPosition ? (
         <div
           className="terminal-autocomplete-layout"
           style={popupLayoutPosition}
@@ -1628,8 +1658,8 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
           ) : null}
         </div>
       ) : null}
-      {passwordPrompt && active ? (
-        <div className="password-assist">
+      {passwordPrompt && passwordPosition ? (
+        <div className="password-assist" style={passwordPosition}>
           <header>
             <KeyRound size={14} />
             <strong>{t("Saved Passwords")}</strong>
@@ -1858,6 +1888,33 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
+function passwordPromptPosition(terminal: Terminal, container: HTMLElement, itemCount: number) {
+  const screen = terminal.element?.querySelector(".xterm-screen")?.getBoundingClientRect();
+  if (!screen?.height || !screen.width || !terminal.rows || !terminal.cols) return;
+  const buffer = terminal.buffer.active;
+  const row = buffer.baseY + buffer.cursorY - buffer.viewportY;
+  if (row < 0 || row >= terminal.rows) return;
+  const pane = container.getBoundingClientRect();
+  const cellHeight = screen.height / terminal.rows;
+  const caretX = screen.left - pane.left + buffer.cursorX * screen.width / terminal.cols;
+  const caretY = screen.top - pane.top + row * cellHeight;
+  return passwordPanelPlacement(caretX, caretY, cellHeight, pane.width, pane.height, itemCount);
+}
+
+export function passwordPanelPlacement(
+  x: number, y: number, cellHeight: number, paneWidth: number, paneHeight: number, itemCount: number,
+) {
+  const width = Math.min(340, Math.max(0, paneWidth - 16));
+  const left = Math.max(8, Math.min(x, paneWidth - width - 8));
+  const belowY = y + cellHeight + 6;
+  const below = Math.max(0, paneHeight - belowY - 8);
+  const above = Math.max(0, y - 6 - 8);
+  const preferredHeight = 66 + Math.min(190, 10 + itemCount * 36 + Math.max(0, itemCount - 1) * 2);
+  return below >= preferredHeight || below >= above
+    ? { left, width, top: belowY, maxHeight: below }
+    : { left, width, bottom: paneHeight - y + 6, maxHeight: above };
+}
+
 function terminalCursorPosition(
   terminal: Terminal | undefined,
   container: HTMLDivElement | null,
@@ -1886,18 +1943,22 @@ export function terminalAutocompletePopupPosition(
   containerHeight: number,
   subdirectoryPanelCount: number,
   showsDetail: boolean,
+  anchorLeft?: number,
 ) {
   const preferredWidth =
     440 + subdirectoryPanelCount * 218 + (showsDetail ? 284 : 0);
   const width = Math.min(preferredWidth, Math.max(180, containerWidth - 16));
   const left = Math.max(
     8,
-    Math.min(cursor.left, Math.max(8, containerWidth - width - 8)),
+    Math.min(
+      anchorLeft ?? cursor.left,
+      Math.max(8, containerWidth - (anchorLeft === undefined ? width : Math.min(240, width)) - 8),
+    ),
   );
   const below = cursor.top + cursor.lineHeight + 6;
   const top =
     below + 248 <= containerHeight - 8 ? below : Math.max(8, cursor.top - 254);
-  return { left, top };
+  return { left, top, maxWidth: Math.max(0, containerWidth - left - 8) };
 }
 
 export function nextAutocompleteWord(suffix: string) {

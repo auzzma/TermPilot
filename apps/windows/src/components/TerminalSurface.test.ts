@@ -10,6 +10,7 @@ import {
   parseLatencyMilliseconds,
   parseTerminalMetadata,
   shouldStartTerminal,
+  passwordPanelPlacement,
   terminalAutocompletePopupPosition,
   terminalFont,
   terminalContextMenuPosition,
@@ -29,6 +30,19 @@ describe("terminal focus", () => {
   });
 });
 
+describe("password picker placement", () => {
+  it("sits just below the password cursor and flips above at the bottom right", () => {
+    expect(passwordPanelPlacement(60, 12, 18, 600, 700, 1))
+      .toMatchObject({ left: 60, top: 36, width: 340 });
+    expect(passwordPanelPlacement(550, 660, 18, 600, 700, 3))
+      .toMatchObject({ left: 252, bottom: 46 });
+  });
+  it("fits a long credential list into the larger side of a small split pane", () => {
+    expect(passwordPanelPlacement(150, 60, 16, 210, 190, 12))
+      .toEqual({ left: 8, width: 194, top: 82, maxHeight: 100 });
+  });
+});
+
 describe("autocomplete popup placement", () => {
   it("keeps cascading panels inside the terminal and flips above", () => {
     expect(
@@ -39,7 +53,52 @@ describe("autocomplete popup placement", () => {
         1,
         true,
       ),
-    ).toEqual({ left: 8, top: 226 });
+    ).toEqual({ left: 8, top: 226, maxWidth: 784 });
+  });
+
+  it("keeps the initial X while typing and follows wrapped lines vertically", () => {
+    const first = terminalAutocompletePopupPosition(
+      { left: 120, top: 100, lineHeight: 20 }, 1000, 600, 0, false,
+    );
+    expect(first.left).toBe(120);
+    const moved = terminalAutocompletePopupPosition(
+      { left: 300, top: 100, lineHeight: 20 }, 1000, 600, 0, false, first.left,
+    );
+    expect(moved).toEqual(first);
+    const wrapped = terminalAutocompletePopupPosition(
+      { left: 8, top: 120, lineHeight: 20 }, 1000, 600, 0, false, first.left,
+    );
+    expect(wrapped.left).toBe(first.left);
+    expect(wrapped.top).toBe(first.top + 20);
+    const bottom = terminalAutocompletePopupPosition(
+      { left: 50, top: 560, lineHeight: 20 }, 1000, 600, 0, false, first.left,
+    );
+    expect(bottom.left).toBe(first.left);
+    expect(bottom.top).toBeLessThan(560);
+  });
+
+  it("keeps X when panels grow and clamps only when the terminal shrinks", () => {
+    const first = terminalAutocompletePopupPosition(
+      { left: 500, top: 100, lineHeight: 20 }, 1000, 600, 0, false,
+    );
+    const expanded = terminalAutocompletePopupPosition(
+      { left: 600, top: 100, lineHeight: 20 }, 1000, 600, 2, true, first.left,
+    );
+    expect(expanded.left).toBe(first.left);
+    expect(expanded.left + expanded.maxWidth).toBe(992);
+    const resized = terminalAutocompletePopupPosition(
+      { left: 8, top: 100, lineHeight: 20 }, 420, 600, 0, false, first.left,
+    );
+    expect(resized.left).toBe(172);
+    expect(resized.maxWidth).toBe(240);
+    const regrown = terminalAutocompletePopupPosition(
+      { left: 500, top: 100, lineHeight: 20 }, 1000, 600, 0, false, resized.left,
+    );
+    expect(regrown.left).toBe(resized.left);
+    const reopened = terminalAutocompletePopupPosition(
+      { left: 300, top: 100, lineHeight: 20 }, 1000, 600, 0, false,
+    );
+    expect(reopened.left).toBe(300);
   });
 });
 

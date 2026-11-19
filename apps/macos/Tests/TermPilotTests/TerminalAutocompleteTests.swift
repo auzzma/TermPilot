@@ -2,10 +2,116 @@ import AppKit
 import Foundation
 import TermPilotDomain
 @testable import TermPilotTerminal
+@preconcurrency import SwiftTerm
 import XCTest
 
 @MainActor
 final class TerminalAutocompleteTests: XCTestCase {
+    func testPopupKeepsHorizontalAnchorWhileCursorMovesAndWraps() throws {
+        try withAutocompleteOverlay { overlay, terminal, caret, popup in
+            caret.frame = CGRect(x: 120, y: 400, width: 10, height: 20)
+            let presentation = popupPresentation()
+            overlay.update(presentation)
+            let initialFrame = popup.frame
+            XCTAssertEqual(initialFrame.minX, 120)
+
+            caret.frame.origin.x = 300
+            overlay.update(presentation)
+            XCTAssertEqual(popup.frame.origin, initialFrame.origin)
+
+            // A wrapped line changes both cursor coordinates; only Y follows.
+            caret.frame.origin = CGPoint(x: 0, y: 380)
+            overlay.updateLayout()
+            XCTAssertEqual(popup.frame.minX, initialFrame.minX)
+            XCTAssertEqual(popup.frame.minY, initialFrame.minY - 20)
+
+            // Near the bottom the popup still flips above the cursor.
+            caret.frame.origin = CGPoint(x: 30, y: 8)
+            overlay.updateLayout()
+            XCTAssertEqual(popup.frame.minX, initialFrame.minX)
+            XCTAssertEqual(popup.frame.minY, caret.frame.maxY + 6)
+            XCTAssertLessThanOrEqual(popup.frame.maxY, terminal.bounds.height - 8)
+        }
+    }
+
+    func testPopupReanchorsAfterDismissalOrTerminalIsHidden() throws {
+        try withAutocompleteOverlay { overlay, terminal, caret, popup in
+            caret.frame = CGRect(x: 120, y: 400, width: 10, height: 20)
+            overlay.update(popupPresentation())
+            overlay.update(.empty)
+            XCTAssertTrue(popup.isHidden)
+            caret.frame.origin.x = 300
+            overlay.update(popupPresentation())
+            XCTAssertEqual(popup.frame.minX, 300)
+
+            terminal.isHidden = true
+            overlay.updateLayout()
+            XCTAssertTrue(popup.isHidden)
+            terminal.isHidden = false
+            caret.frame.origin.x = 80
+            overlay.updateLayout()
+            XCTAssertFalse(popup.isHidden)
+            XCTAssertEqual(popup.frame.minX, 80)
+        }
+    }
+
+    func testPopupContentGrowthKeepsAnchorAndWindowResizeKeepsListInBounds() throws {
+        try withAutocompleteOverlay { overlay, terminal, caret, popup in
+            caret.frame = CGRect(x: 500, y: 400, width: 10, height: 20)
+            overlay.update(popupPresentation())
+            let initialX = popup.frame.minX
+            var expanded = popupPresentation()
+            expanded.suggestions[0].displayText = String(repeating: "long-command ", count: 8)
+            expanded.suggestions[0].detail = "Command description"
+            expanded.selectedIndex = 0
+            overlay.update(expanded)
+            XCTAssertEqual(popup.frame.minX, initialX)
+            XCTAssertLessThanOrEqual(popup.frame.maxX, terminal.bounds.width - 8)
+            popup.layoutSubtreeIfNeeded()
+            for panel in popup.subviews where !panel.isHidden {
+                XCTAssertLessThanOrEqual(panel.frame.maxX, popup.bounds.width)
+            }
+            overlay.update(popupPresentation())
+            XCTAssertEqual(popup.frame.minX, initialX)
+
+            terminal.setFrameSize(NSSize(width: 420, height: 600))
+            overlay.updateLayout()
+            XCTAssertGreaterThanOrEqual(popup.frame.minX, 8)
+            XCTAssertGreaterThanOrEqual(popup.frame.width, 240)
+            XCTAssertLessThanOrEqual(popup.frame.maxX, terminal.bounds.width - 8)
+            let resizedX = popup.frame.minX
+            caret.frame.origin.x = 10
+            overlay.updateLayout()
+            XCTAssertEqual(popup.frame.minX, resizedX)
+        }
+    }
+
+    private func popupPresentation() -> TerminalAutocompletePresentation {
+        TerminalAutocompletePresentation(
+            suggestions: [.init(text: "git", displayText: "git", source: .command, score: 1)],
+            showsPopupMenu: true
+        )
+    }
+
+    private func withAutocompleteOverlay(
+        _ body: (TerminalAutocompleteOverlayView, LocalProcessTerminalView, NSView, TerminalAutocompletePopupView) throws -> Void
+    ) throws {
+        let terminal = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let window = NSWindow(contentRect: terminal.bounds, styleMask: [.borderless], backing: .buffered, defer: true)
+        window.contentView = terminal
+        let overlay = TerminalAutocompleteOverlayView(terminalView: terminal)
+        terminal.addSubview(overlay)
+        defer {
+            overlay.stopMonitoring()
+            window.contentView = nil
+        }
+        let caret = try XCTUnwrap(terminal.subviews.first {
+            String(describing: type(of: $0)).contains("CaretView")
+        })
+        let popup = try XCTUnwrap(overlay.subviews.compactMap { $0 as? TerminalAutocompletePopupView }.first)
+        try body(overlay, terminal, caret, popup)
+    }
+
     func testPopupAndDirectoryListsHaveFiniteFramesBeforeSizingAndAfterResizing() {
         let popup = TerminalAutocompletePopupView(frame: .zero)
         let suggestion = TerminalAutocompleteSuggestion(text: "cd docs", displayText: "docs", source: .path, score: 1, isDirectory: true)
