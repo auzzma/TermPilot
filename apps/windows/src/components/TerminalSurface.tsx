@@ -1,3 +1,5 @@
+import { savedScriptPlan, writeSavedScriptPlan, type SavedScriptAction, type SavedScriptPlan } from "../savedScript";
+import type { AutomationScript } from "../types";
 import { frameCoalescer, latestAsync } from "../uiScheduling";
 import { terminalSelections, terminalContexts, addSelectionToAI } from "../ai";
 import {
@@ -86,6 +88,8 @@ interface CachedTerminalSurface {
   fit: FitAddon;
   search: SearchAddon;
   scheduleResize?: () => void;
+  scriptPasteMode?: () => boolean | undefined;
+  clearAutocomplete?: () => void;
 }
 
 interface TerminalContextMenuState {
@@ -113,6 +117,30 @@ export function focusTerminalSurface(sessionId: string) {
   if (!cached?.terminal.element?.isConnected) return false;
   cached.terminal.focus();
   return true;
+}
+
+async function writeSessionScript(sessionId: string, plan: SavedScriptPlan, waitForPrompt = false) {
+  const surface = terminalSurfaceCache.get(sessionId);
+  const getMode = surface?.scriptPasteMode;
+  if (!surface || !getMode) throw new Error("Wait for a connected shell prompt.");
+  await writeSavedScriptPlan(plan, () => {
+    const connected = useAppStore.getState().workspace.sessions.find((item) => item.id === sessionId)?.lifecycle === "connected";
+    if (connected && terminalSurfaceCache.get(sessionId)?.scriptPasteMode === getMode) return getMode();
+    return undefined;
+  }, (input) => {
+    surface.clearAutocomplete?.();
+    return invoke("terminal_write", { sessionId, data: encodeUtf8(input) });
+  }, waitForPrompt);
+}
+
+export async function sendSavedScript(
+  session: SessionDescriptor, script: AutomationScript, action: SavedScriptAction,
+) {
+  const surface = terminalSurfaceCache.get(session.id)?.scriptPasteMode;
+  const plan = await savedScriptPlan(script, action);
+  if (!surface || surface !== terminalSurfaceCache.get(session.id)?.scriptPasteMode) throw new Error("Wait for a connected shell prompt.");
+  await writeSessionScript(session.id, plan);
+  focusTerminalSurface(session.id);
 }
 
 export function shouldStartTerminal(cacheHit: boolean) {
@@ -505,6 +533,9 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
       subdirectoryFocusLevelRef.current = -1;
       setSubdirectoryFocusLevel(-1);
     };
+    cached.scriptPasteMode = () => passwordInputActiveRef.current || terminal.buffer.active.type === "alternate"
+      ? undefined : terminal.modes.bracketedPasteMode;
+    cached.clearAutocomplete = clearAutocomplete;
     const updatePasswordPrompt = (
       request: PasswordPromptRequest | undefined,
     ) => {
@@ -996,7 +1027,10 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
               setLifecycle(session.id, "connected");
               markConnectionConnected(session.id);
               const startupCommand = consumeStartupCommand(session.id);
-              if (startupCommand) {
+              if (startupCommand?.script) {
+                void writeSessionScript(session.id, startupCommand.script, true)
+                  .catch((reason) => setError(t(reason instanceof Error ? reason.message : String(reason))));
+              } else if (startupCommand) {
                 const kind = passwordPromptCommandKind(startupCommand.command);
                 if (kind && startupCommand.automaticPassword) {
                   armAutomaticPassword(startupCommand.automaticPassword, kind);
@@ -1136,7 +1170,10 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
           if (session.kind === "local") {
             setLifecycle(session.id, "connected");
             const startupCommand = consumeStartupCommand(session.id);
-            if (startupCommand) {
+            if (startupCommand?.script) {
+              void writeSessionScript(session.id, startupCommand.script, true)
+                .catch((reason) => setError(t(reason instanceof Error ? reason.message : String(reason))));
+            } else if (startupCommand) {
               await invoke("terminal_write", {
                 sessionId: session.id,
                 data: encodeUtf8(startupCommand.command),
@@ -1156,6 +1193,8 @@ function TerminalSurfaceView({ session, active }: TerminalSurfaceProps) {
     }
 
     return () => {
+      cached.scriptPasteMode = undefined;
+      cached.clearAutocomplete = undefined;
       input.dispose();
       resizeDisposed = true;
       resizeObserver.disconnect();

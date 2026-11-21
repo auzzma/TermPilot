@@ -283,6 +283,14 @@ pub fn terminal_start(
 }
 
 #[tauri::command]
+pub fn saved_script_plan(
+    body: String,
+    action: termpilot_core::saved_script::Action,
+) -> Result<termpilot_core::saved_script::Input, String> {
+    termpilot_core::saved_script::plan(&body, action).map_err(|error| error.message.to_owned())
+}
+
+#[tauri::command]
 pub fn terminal_write(
     state: State<'_, TerminalManager>,
     connections: State<'_, crate::bridge::Connections>,

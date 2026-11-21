@@ -1,6 +1,13 @@
 import { useAppStore } from "./store";
 
 const zhHans: Record<string, string> = {
+  "Insert into Terminal": "插入终端",
+  "Interpreter for batch jobs and mobile": "批量作业和移动端使用的解释器",
+  "Enter a script to run or insert.": "请先填写脚本内容。",
+  "The script contains terminal control characters.": "脚本包含终端控制字符，请移除后再试。",
+  "Enable bracketed paste in the current shell to use this script.": "请在当前 Shell 中启用括号粘贴，以便整段插入此脚本。",
+  "Wait for a connected shell prompt.": "请在终端已连接并显示命令提示符后重试。",
+
   "Remote log directory": "远端日志目录",
   "Background execution requires Python 3.8+ on a POSIX server": "后台执行需要 POSIX 远端系统及 Python 3.8 或更高版本",
   "Background supervisor stopped without a final result": "远端后台进程异常停止，未返回最终结果",

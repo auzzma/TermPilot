@@ -14,7 +14,6 @@ import {
   hostIdsInGroup,
   hostsMovedToGroup,
   initialCollapsedGroupIds,
-  normalizedScriptCommand,
   reconcileCollapsedGroupIds,
   validateHostEditorDraft,
 } from "./Sidebar";
@@ -160,10 +159,6 @@ describe("Swift-compatible host context menu", () => {
     ).toBe("saved-secret");
   });
 
-  it("normalizes scripts for execution after SSH connects", () => {
-    expect(normalizedScriptCommand("echo ready")).toBe("echo ready\n");
-    expect(normalizedScriptCommand("  ")).toBeUndefined();
-  });
 });
 
 describe("Swift-compatible host editor", () => {

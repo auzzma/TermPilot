@@ -1,6 +1,6 @@
 [package]
 name = "termpilot-windows"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 license = "GPL-3.0-or-later"
 description = "TermPilot Windows UI with shared Rust engines"

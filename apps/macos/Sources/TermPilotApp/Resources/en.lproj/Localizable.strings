@@ -1246,3 +1246,10 @@
 "The remote server does not permit resolution changes." = "The remote server does not permit resolution changes.";
 "The remote server lacks resources for this resolution." = "The remote server lacks resources for this resolution.";
 "The remote server rejected this resolution. Try another size." = "The remote server rejected this resolution. Try another size.";
+
+"Insert into Terminal" = "Insert into Terminal";
+"Interpreter for batch jobs and mobile" = "Interpreter for batch jobs and mobile";
+"Enter a script to run or insert." = "Enter a script to run or insert.";
+"The script contains terminal control characters." = "The script contains terminal control characters.";
+"Enable bracketed paste in the current shell to use this script." = "Enable bracketed paste in the current shell to use this script.";
+"Wait for a connected shell prompt." = "Wait for a connected shell prompt.";

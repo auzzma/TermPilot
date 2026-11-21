@@ -8,6 +8,10 @@ import TermPilotRemote
 import TermPilotTerminal
 import TermPilotScreenSharing
 
+enum SavedScriptAction: String {
+    case insert, run
+}
+
 private final class ManagedPortForwardProcess: @unchecked Sendable {
     let ruleID: UUID
     private let process = Process()
@@ -2512,14 +2516,13 @@ final class AppState: ObservableObject {
         await runAutomationScript(script, in: sessionID)
     }
 
-    func runAutomationScript(_ script: AutomationScript, in sessionID: UUID) async {
+    func runAutomationScript(_ script: AutomationScript, in sessionID: UUID, action: SavedScriptAction = .run) async {
         guard let runtime = runtimes[sessionID] else {
             presentedError = AppLocalization.string("No focused terminal is available.")
             return
         }
         do {
-            let script = try script.validated()
-            sendShellScript(script.body, to: runtime)
+            try await sendSavedScript(script, action: action, to: runtime)
         } catch {
             presentedError = AppLocalization.errorDescription(error)
         }
@@ -2535,11 +2538,23 @@ final class AppState: ObservableObject {
             guard let runtime = runtimes[sessionID] else {
                 throw AppStateError.invalidSession
             }
-            let script = try script.validated()
-            sendShellScript(script.body, to: runtime)
+            try await sendSavedScript(script, action: .run, to: runtime, waitForPrompt: true)
         } catch {
             presentedError = AppLocalization.errorDescription(error)
         }
+    }
+
+    private func sendSavedScript(
+        _ script: AutomationScript, action: SavedScriptAction, to runtime: TerminalSessionRuntime,
+        waitForPrompt: Bool = false
+    ) async throws {
+        let plan = try SharedCore.call([
+            "method": "savedScriptPlan", "action": action.rawValue, "body": script.body
+        ])
+        guard let bracketed = plan["bracketedInput"] as? String else { throw AppStateError.invalidSession }
+        try await runtime.sendSavedScriptInput(
+            bracketed: bracketed, plain: plan["plainInput"] as? String, waitForPrompt: waitForPrompt
+        )
     }
 
     private func sendShellScript(

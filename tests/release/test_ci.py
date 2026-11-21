@@ -62,10 +62,10 @@ class ReleasePublicationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.log.read_text().splitlines()
         self.assertEqual([line.split()[1] for line in calls], ['view', 'create', 'edit'])
-        self.assertIn('--draft --title v.0.2.0-1234567', calls[1])
+        self.assertIn('--draft --title v0.2.0-1234567', calls[1])
         for arch in ('arm64-v8a', 'x86_64'):
             self.assertIn(f'TermPilot-0.2.0-Android-{arch}-test.apk', calls[1])
-        self.assertIn('--title v.0.2.0-1234567 --draft=false', calls[2])
+        self.assertIn('--title v0.2.0-1234567 --draft=false', calls[2])
 
     def test_missing_android_architecture_prevents_publication(self):
         next(self.root.glob('dist/mobile/android/*x86_64*.apk')).unlink()

@@ -6,6 +6,16 @@ import SwiftUI
 import TermPilotDomain
 import TermPilotRemote
 
+private enum ScriptInputError: LocalizedError {
+    case notReady, pasteUnavailable
+    var errorDescription: String? {
+        switch self {
+        case .notReady: "Wait for a connected shell prompt."
+        case .pasteUnavailable: "Enable bracketed paste in the current shell to use this script."
+        }
+    }
+}
+
 public struct TerminalContextMenuTitles: Equatable, Sendable {
     public var copy: String
     public var paste: String
@@ -528,7 +538,7 @@ final class AutoStartingTerminalView:
         }
     }
 
-    private func sendWithoutTermPilotInputProcessing(_ value: String) {
+    fileprivate func sendWithoutTermPilotInputProcessing(_ value: String) {
         bypassesTermPilotInputProcessing = true
         send(txt: value)
         bypassesTermPilotInputProcessing = false
@@ -1203,6 +1213,36 @@ public final class TerminalSessionRuntime: NSObject, ObservableObject {
         contextMenuTitles = titles
         (terminalView as? AutoStartingTerminalView)?
             .contextMenuTitles = titles
+    }
+
+    public var acceptsSavedScriptInput: Bool {
+        lifecycle == .connected && terminalView?.getTerminal().isCurrentBufferAlternate == false && !isPasswordInputActive
+    }
+
+    public var usesBracketedPaste: Bool {
+        terminalView?.getTerminal().bracketedPasteMode == true
+    }
+
+    public func sendSavedScriptInput(
+        bracketed: String, plain: String?, waitForPrompt: Bool = false
+    ) async throws {
+        guard let view = terminalView as? AutoStartingTerminalView else { throw ScriptInputError.notReady }
+        let sessionGeneration = generation
+        // An SSH connection can be ready before the shell enables bracketed paste at its first prompt.
+        if waitForPrompt && plain == nil {
+            let clock = ContinuousClock()
+            let deadline = clock.now + .seconds(5)
+            while !usesBracketedPaste && acceptsSavedScriptInput && generation == sessionGeneration && clock.now < deadline {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+        }
+        guard generation == sessionGeneration, terminalView === view, acceptsSavedScriptInput else {
+            throw ScriptInputError.notReady
+        }
+        guard let input = usesBracketedPaste ? bracketed : plain else { throw ScriptInputError.pasteUnavailable }
+        closeAutocomplete()
+        view.sendWithoutTermPilotInputProcessing(input)
+        focus()
     }
 
     public func sendText(

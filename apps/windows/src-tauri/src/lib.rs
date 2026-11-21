@@ -117,6 +117,7 @@ pub fn run() {
             autocomplete::autocomplete_suggestions,
             terminal::terminal_start,
             terminal::terminal_write,
+            terminal::saved_script_plan,
             terminal::terminal_resize,
             terminal::terminal_terminate,
             bridge::ssh_terminal_start,

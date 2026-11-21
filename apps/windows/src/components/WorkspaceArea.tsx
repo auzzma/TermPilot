@@ -71,6 +71,7 @@ import { openQuickSwitcher } from "./QuickSwitcher";
 import {
   disposeTerminalSurface,
   focusTerminalSurface,
+  sendSavedScript,
   TerminalSurface,
 } from "./TerminalSurface";
 import {
@@ -1819,7 +1820,7 @@ function SidePanelContent({
     return <SystemPanel active={active} host={host} session={session} />;
   }
   if (selected === "scripts") {
-    return <ContextScripts sessionId={session.id} />;
+    return <ContextScripts key={session.id} session={session} />;
   }
   if (selected === "tmux") {
     return <TmuxPanel active={active} host={host} session={session} />;
@@ -1881,7 +1882,8 @@ function ConnectionLogPanel({ sessionId }: { sessionId: string }) {
   );
 }
 
-function ContextScripts({ sessionId }: { sessionId: string }) {
+function ContextScripts({ session }: { session: SessionDescriptor }) {
+  const [error, setError] = useState<string>();
   const t = useTranslation();
   const scripts = useAppStore((state) => state.scripts);
   return (
@@ -1890,6 +1892,7 @@ function ContextScripts({ sessionId }: { sessionId: string }) {
         <h3>{t("Scripts")}</h3>
         <p>{t("Run a saved shell script in this terminal session.")}</p>
       </header>
+      {error && <p className="form-error" role="alert">{error}</p>}
       {scripts.length === 0 ? (
         <div className="side-tool-empty">
           <SquareTerminal size={24} />
@@ -1902,22 +1905,21 @@ function ContextScripts({ sessionId }: { sessionId: string }) {
               <strong>{script.title}</strong>
               <code>{script.body}</code>
               <footer>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void invoke("terminal_write", {
-                      sessionId,
-                      data: encodeTerminalText(
-                        `${script.body}${
-                          script.body.endsWith("\n") ? "" : "\n"
-                        }`,
-                      ),
-                    })
-                  }
-                >
-                  <Play size={12} />
-                  {t("Run")}
-                </button>
+                {(["insert", "run"] as const).map((action) => (
+                  <button
+                    key={action}
+                    type="button"
+                    disabled={session.lifecycle !== "connected"}
+                    onClick={() => {
+                      setError(undefined);
+                      void sendSavedScript(session, script, action)
+                        .catch((reason) => setError(t(reason instanceof Error ? reason.message : String(reason))));
+                    }}
+                  >
+                    {action === "run" ? <Play size={12} /> : <ClipboardPaste size={12} />}
+                    {t(action === "run" ? "Run" : "Insert into Terminal")}
+                  </button>
+                ))}
               </footer>
             </article>
           ))}

@@ -3012,6 +3012,13 @@ private struct SessionScriptsPanel: View {
                                 .lineLimit(3)
                             HStack {
                                 Spacer()
+                                Button("Insert into Terminal") {
+                                    Task {
+                                        await state.runAutomationScript(
+                                            script, in: runtime.descriptor.id, action: .insert
+                                        )
+                                    }
+                                }
                                 Button("Run") {
                                     Task {
                                         await state.runAutomationScript(

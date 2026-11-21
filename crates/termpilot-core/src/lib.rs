@@ -5,6 +5,7 @@ pub mod connection;
 pub mod frame;
 pub mod launch;
 pub mod resolve;
+pub mod saved_script;
 pub mod server_tools;
 pub mod sync;
 pub mod terminal;
@@ -49,6 +50,20 @@ pub fn dispatch(request: &Value) -> Result<Value, connection::CoreError> {
             Ok(json!({"valid": true}))
         }
         Some("engineLaunch") => launch::plan(request),
+        Some(method @ ("savedScriptPlan" | "savedScriptInput")) => {
+            let action = serde_json::from_value(request["action"].clone())
+                .map_err(|_| CoreError::new("invalidAction", "Unknown script action."))?;
+            let plan = saved_script::plan(request["body"].as_str().unwrap_or(""), action)?;
+            if method == "savedScriptPlan" {
+                return Ok(json!(plan));
+            }
+            let input = if request["bracketed"].as_bool() == Some(true) {
+                plan.bracketed_input
+            } else {
+                plan.plain_input.ok_or(CoreError::new("pasteUnavailable", saved_script::PASTE_UNAVAILABLE))?
+            };
+            Ok(json!({"input":input}))
+        }
         Some("serverTool") => server_tools::plan(request),
         Some("resolveConnection") => resolve::resolve(request),
         Some(method) if method.starts_with("batch.") => batch::dispatch(request),

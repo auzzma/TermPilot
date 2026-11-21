@@ -81,7 +81,7 @@ jobs:
                  dist/mobile/ios/TermPilot-*-ios-ipados.zip.sha256)
           for file in "${files[@]}"; do test -s "$file"; done
           [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
-          title="v.${RELEASE_TAG#v}-${RELEASE_COMMIT:0:7}"
+          title="${RELEASE_TAG}-${RELEASE_COMMIT:0:7}"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
           else

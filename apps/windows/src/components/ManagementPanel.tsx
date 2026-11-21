@@ -1,3 +1,4 @@
+import { savedScriptPlan } from "../savedScript";
 import { BatchWorkspace } from "./BatchWorkspace";
 import { AISettings } from "./AISettings";
 import { DataSyncSettings } from "./DataSyncSettings";
@@ -1524,6 +1525,8 @@ function ForwardPanel() {
 }
 
 function ScriptPanel() {
+  const t = useTranslation();
+  const [runError, setRunError] = useState<string>();
   const items = useAppStore((state) => state.scripts);
   const platform = useAppStore((state) => state.platform);
   const save = useAppStore((state) => state.saveScript);
@@ -1558,23 +1561,21 @@ function ScriptPanel() {
         secondaryAction={{
           label: "Run",
           onClick: () => {
-            const session = openLocal();
-            window.setTimeout(() => {
-              void invoke("terminal_write", {
-                sessionId: session.id,
-                data: encode(`${draft.body}\r`),
-              });
-            }, 600);
+            setRunError(undefined);
+            void savedScriptPlan(draft, "run")
+              .then((command) => openLocal(undefined, command))
+              .catch((reason) => setRunError(t(errorMessage(reason))));
           },
         }}
       >
+        {runError && <p className="form-error" role="alert">{runError}</p>}
         <Field label="Title">
           <input
             value={draft.title}
             onChange={(event) => setDraft({ ...draft, title: event.target.value })}
           />
         </Field>
-        <Field label="Shell">
+        <Field label="Interpreter for batch jobs and mobile">
           <input
             value={draft.shell}
             onChange={(event) => setDraft({ ...draft, shell: event.target.value })}

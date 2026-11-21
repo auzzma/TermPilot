@@ -3569,6 +3569,11 @@ private struct ScriptEditor: View {
                 TextField("Script title", text: $script.title)
             }
             VStack(alignment: .leading, spacing: 6) {
+                Text("Interpreter for batch jobs and mobile")
+                    .font(.caption.weight(.semibold))
+                TextField("/bin/sh", text: $script.shell)
+            }
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Content")
                     .font(.caption.weight(.semibold))
                 ZStack(alignment: .topLeading) {
@@ -3595,7 +3600,6 @@ private struct ScriptEditor: View {
                 Spacer()
                 Button("Cancel", role: .cancel, action: onCancel)
                 Button("Save") {
-                    script.shell = "/bin/sh"
                     onSave(script)
                 }
                 .keyboardShortcut(.defaultAction)

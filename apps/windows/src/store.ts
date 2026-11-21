@@ -1,3 +1,4 @@
+import type { SavedScriptPlan } from "./savedScript";
 import { create } from "zustand";
 import { DeferredWrite } from "./deferredWrite";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -93,7 +94,7 @@ interface AppStore extends BootstrapSnapshot {
   updatePreferences: (preferences: AppPreferences) => Promise<void>;
   deleteKnownHost: (id: string) => Promise<void>;
   deleteKnownHosts: (ids: string[]) => Promise<void>;
-  openLocalSession: (axis?: SplitAxis) => SessionDescriptor;
+  openLocalSession: (axis?: SplitAxis, startupCommand?: string | SavedScriptPlan) => SessionDescriptor;
   openLocalTab: (targetSessionId: string) => SessionDescriptor;
   openSiblingTab: (
     sourceSessionId: string,
@@ -111,7 +112,7 @@ interface AppStore extends BootstrapSnapshot {
   openHostSession: (
     host: Host,
     axis?: SplitAxis,
-    startupCommand?: string,
+    startupCommand?: string | SavedScriptPlan,
     quickConnect?: boolean,
   ) => SessionDescriptor;
   selectWorkspace: (id: string) => void;
@@ -183,9 +184,12 @@ interface AppStore extends BootstrapSnapshot {
   duplicateWorkspace: (workspaceId: string) => void;
 }
 
-export interface SessionStartupCommand {
-  command: string;
-  automaticPassword?: string;
+export type SessionStartupCommand =
+  | { command: string; automaticPassword?: string; script?: never }
+  | { script: SavedScriptPlan };
+
+function sessionStartupCommand(value: string | SavedScriptPlan): SessionStartupCommand {
+  return typeof value === "string" ? { command: value } : { script: value };
 }
 
 const emptySnapshot: BootstrapSnapshot = {
@@ -491,7 +495,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }));
   },
 
-  openLocalSession: (axis) => {
+  openLocalSession: (axis, startupCommand) => {
     const profile = get();
     const shell =
       profile.platform === "windows" ? "powershell.exe" : "/bin/zsh";
@@ -503,6 +507,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       fontSize: profile.preferences.terminalFontSize,
       lifecycle: "connecting",
     };
+    if (startupCommand) {
+      set((state) => ({
+        sessionStartupCommands: { ...state.sessionStartupCommands, [session.id]: sessionStartupCommand(startupCommand) },
+      }));
+    }
     addSession(set, get, session, axis);
     return session;
   },
@@ -691,7 +700,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       sessionStartupCommands: startupCommand
         ? {
           ...state.sessionStartupCommands,
-          [session.id]: { command: startupCommand },
+          [session.id]: sessionStartupCommand(startupCommand),
         }
         : state.sessionStartupCommands,
     }));

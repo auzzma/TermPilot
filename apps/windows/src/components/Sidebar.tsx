@@ -1,3 +1,4 @@
+import { savedScriptPlan, type SavedScriptPlan } from "../savedScript";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   Activity,
@@ -75,6 +76,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
   const saveHosts = useAppStore((state) => state.saveHosts);
   const deleteHost = useAppStore((state) => state.deleteHost);
   const [search, setSearch] = useState("");
+  const [scriptError, setScriptError] = useState<string>();
   const [editingHost, setEditingHost] = useState<Host>();
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() =>
     initialCollapsedGroupIds(groups),
@@ -140,7 +142,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
     ? hostLoginPassword(hostMenu.host, credentials)
     : undefined;
 
-  function connectHost(host: Host, axis?: SplitAxis, startupCommand?: string) {
+  function connectHost(host: Host, axis?: SplitAxis, startupCommand?: string | SavedScriptPlan) {
     const session = openHost(host, axis, startupCommand);
     setNavigation("hosts");
     return session;
@@ -396,6 +398,7 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
           </div>
         ) : null}
 
+        {scriptError && <p className="form-error" role="alert">{scriptError}</p>}
         <div className="sidebar-hosts-label">{t("Hosts")}</div>
         <div className="host-tree">
           {rootHosts.map((host) => (
@@ -537,10 +540,11 @@ export function Sidebar({ onCollapse }: { onCollapse: () => void }) {
                         key={script.id}
                         type="button"
                         onClick={() => {
-                          const command = normalizedScriptCommand(script.body);
-                          if (command) {
-                            connectHost(hostMenu.host, undefined, command);
-                          }
+                          const host = hostMenu.host;
+                          setScriptError(undefined);
+                          void savedScriptPlan(script, "run")
+                            .then((command) => connectHost(host, undefined, command))
+                            .catch((reason) => setScriptError(t(reason instanceof Error ? reason.message : String(reason))));
                           setHostMenu(undefined);
                         }}
                       >
@@ -2577,11 +2581,6 @@ export function hostLoginPassword(host: Host, credentials: Credential[]) {
   return host.authentication === "password"
     ? host.password || undefined
     : undefined;
-}
-
-export function normalizedScriptCommand(body: string) {
-  const script = body.trim();
-  return script ? `${script}\n` : undefined;
 }
 
 async function copyText(value: string) {

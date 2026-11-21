@@ -201,6 +201,16 @@ describe("workspace tree", () => {
     ]);
   });
 
+  it("keeps a local script until its own terminal starts and consumes it once", () => {
+    const other = useAppStore.getState().openLocalSession();
+    const script = { bracketedInput: "\x1b[200~echo 1\necho 2\x1b[201~\r" };
+    const target = useAppStore.getState().openLocalSession(undefined, script);
+    const consume = useAppStore.getState().consumeSessionStartupCommand;
+    expect(consume(other.id)).toBeUndefined();
+    expect(consume(target.id)).toEqual({ script });
+    expect(consume(target.id)).toBeUndefined();
+  });
+
   it("queues a host context-menu script until SSH is connected", () => {
     const opened = useAppStore
       .getState()
