@@ -415,5 +415,16 @@
   "重新连接失败，请检查主机及凭证后重试。": "Reconnection failed. Check the host and credentials before retrying.",
   "连接或凭证不可用，请重新连接后再试。": "The connection or credential is unavailable. Reconnect before retrying.",
   "高性能使用局域网直连，默认 1080p SDR，连接后可调整分辨率。": "High performance uses a direct local network connection at 1080p SDR by default. You can change the resolution after connecting.",
-  "关闭": "Close"
+  "关闭": "Close",
+  "快速连接凭证": "Quick Connect Credentials",
+  "凭证使用方式": "Credential strategy",
+  "每次选择": "Choose each time",
+  "记住上次成功使用的凭证": "Remember last successful credential",
+  "固定凭证": "Fixed credential",
+  "设为此协议默认": "Use as protocol default",
+  "凭证不可用，请重新选择。": "Credential unavailable. Select again.",
+  "保存为凭证": "Save as credential",
+  "无法保存凭证偏好设置。": "Could not save credential preferences.",
+  "请选择凭证": "Select credential",
+  "凭证名称": "Credential label"
 }

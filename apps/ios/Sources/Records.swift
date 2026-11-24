@@ -29,6 +29,14 @@ struct RecordEditor: View {
   @State private var fields: JSON = [:]
   @State private var remoteProfile: JSON = [:]
   @State private var saving = false
+  @State private var explicitUsername = false
+  @State private var credentialLabel = ""
+  private var quickProtocol: QuickCredentialProtocol {
+    QuickCredentialProtocol.resolve(kind: fields.text("connectionKind", "ssh"), mode: fields.text("mode", "standardVNC"))
+  }
+  private var availableCredentials: [JSON] {
+    (model.records["credentials"] ?? []).filter { quickProtocol.supports(kind: $0.text("kind")) }
+  }
   var body: some View {
     NavigationStack {
       Form {
@@ -64,13 +72,39 @@ struct RecordEditor: View {
           Section(tr("认证")) {
             Picker(tr("凭证"), selection: string("credentialID")) {
               Text(tr("手动输入")).tag("")
-              ForEach(model.records["credentials"] ?? [], id: \.selfID) {
+              if !fields.text("credentialID").isEmpty && !availableCredentials.contains(where: { $0.text("id") == fields.text("credentialID") }) {
+                Text(tr("凭证不可用，请重新选择。")).tag(fields.text("credentialID")).disabled(true)
+              }
+              ForEach(availableCredentials, id: \.selfID) {
                 Text($0.text("label")).tag($0.text("id"))
               }
             }
-            if fields.text("credentialID").isEmpty {
+            if !fields.text("credentialID").isEmpty && !availableCredentials.contains(where: { $0.text("id") == fields.text("credentialID") }) {
+              Text(tr("凭证不可用，请重新选择。")).foregroundStyle(.orange)
+            }
+            if item.connectOnly, !fields.text("credentialID").isEmpty {
+              Button(tr("设为此协议默认")) {
+                QuickCredentialPreferences().configure(quickProtocol, strategy: .fixed, credentialID: fields.text("credentialID"))
+              }
+            }
+            if item.connectOnly || fields.text("credentialID").isEmpty {
               field(tr("用户名"), "username")
+            }
+            if fields.text("credentialID").isEmpty {
               SecureField(tr("密码"), text: string("password"))
+              if item.connectOnly, !fields.text("password").isEmpty {
+                TextField(tr("凭证名称"), text: $credentialLabel)
+                Button(tr("保存为凭证")) {
+                  saving = true
+                  model.attempt {
+                    defer { saving = false }
+                    let id = UUID().uuidString
+                    try await model.save("credentials", item: ["id":id,"label":credentialLabel.trimmingCharacters(in:.whitespacesAndNewlines),"kind":"password","username":fields.text("username"),"password":fields.text("password")])
+                    fields["credentialID"] = id
+                    credentialLabel = ""
+                  }
+                }.disabled(saving || credentialLabel.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty)
+              }
             }
           }
           Section(tr("网络")) {
@@ -212,9 +246,12 @@ struct RecordEditor: View {
                 r[key] = NSNull()
               }
               if item.connectOnly {
+                if !r.text("credentialID").isEmpty && !availableCredentials.contains(where: { $0.text("id") == r.text("credentialID") }) {
+                  throw MobileError(message: tr("凭证不可用，请重新选择。"))
+                }
                 if r.text("label").isEmpty { r["label"] = r.text("hostname") }
                 if let onQuickConnect { onQuickConnect(r); return }
-                try await model.connect(r)
+                try await model.connect(r, quickConnect: true)
                 dismiss()
                 return
               }
@@ -248,7 +285,14 @@ struct RecordEditor: View {
           }.disabled(saving)
         }
       }
-    }.interactiveDismissDisabled(saving).task {
+    }.interactiveDismissDisabled(saving)
+    .onChange(of: quickProtocol) { _, _ in applyQuickCredential() }
+    .onChange(of: fields.text("credentialID")) { _, id in
+      if item.connectOnly, !explicitUsername, let credential = availableCredentials.first(where: { $0.text("id") == id }) {
+        fields["username"] = credential.text("username")
+      }
+    }
+    .task {
       fields = item.record
       if fields.isEmpty {
         fields = [
@@ -275,10 +319,33 @@ struct RecordEditor: View {
       if item.collection == "proxies" {
         fields.merge(item.record.object("configuration")) { _, b in b }
       }
+      if item.connectOnly { explicitUsername = !fields.text("username").isEmpty; applyQuickCredential() }
     }
   }
+  private func applyQuickCredential() {
+    guard item.connectOnly else { return }
+    fields["credentialID"] = ""
+    fields["password"] = ""
+    if !explicitUsername { fields["username"] = "" }
+    let id = QuickCredentialPreferences().selectedID(quickProtocol)
+    guard !id.isEmpty else { return }
+    fields["credentialID"] = id
+  }
   func string(_ key: String, _ fallback: String = "") -> Binding<String> {
-    Binding(get: { fields.text(key, fallback) }, set: { fields[key] = $0 })
+    Binding(get: { fields.text(key, fallback) }, set: {
+      fields[key] = $0
+      if key == "username" { explicitUsername = true }
+      if item.connectOnly, key == "credentialID", $0.isEmpty {
+        explicitUsername = false
+        credentialLabel = ""
+        for field in ["username", "password", "identityFile", "identityKey", "privateKey", "publicKey", "certificate", "passphrase", "elevationPassword"] {
+          fields[field] = ""
+        }
+        fields["authentication"] = "password"
+        fields["serverToolsUseRoot"] = false
+        fields["serverToolsElevationMethod"] = "sudo"
+      }
+    })
   }
   func number(_ key: String, _ fallback: Int) -> Binding<String> {
     Binding(get: { String(fields.number(key, fallback)) }, set: { fields[key] = Int($0) ?? 0 })
@@ -305,6 +372,9 @@ struct RecordsList: View {
   }
   var body: some View {
     List {
+      if collection == "credentials" {
+        NavigationLink(tr("快速连接凭证")) { MobileQuickCredentialSettings() }
+      }
       if (model.records[collection] ?? []).isEmpty {
         ContentUnavailableView(
           tr("暂无数据"), systemImage: collection == "credentials" ? "key" : "folder",

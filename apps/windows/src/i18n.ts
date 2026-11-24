@@ -1,6 +1,19 @@
 import { useAppStore } from "./store";
 
 const zhHans: Record<string, string> = {
+  "Quick Connect Credentials": "快速连接凭证",
+  "Credential strategy": "凭证使用方式",
+  "Choose each time": "每次选择",
+  "Remember last successful credential": "记住上次成功使用的凭证",
+  "Fixed credential": "固定凭证",
+  "Use as protocol default": "设为此协议默认",
+  "Credential unavailable. Select again.": "凭证不可用，请重新选择。",
+  "Save as credential": "保存为凭证",
+  "Could not save credential preferences.": "无法保存凭证偏好设置。",
+  "Apple High Performance": "Apple 高性能",
+  "Credential label": "凭证名称",
+  "Standard VNC": "普通 VNC",
+
   "Insert into Terminal": "插入终端",
   "Interpreter for batch jobs and mobile": "批量作业和移动端使用的解释器",
   "Enter a script to run or insert.": "请先填写脚本内容。",

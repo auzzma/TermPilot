@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 
 @MainActor final class MobileSession: ObservableObject, Identifiable {
+  var quickCredential: (QuickCredentialProtocol, String)?
   let id: UInt64
   let host: JSON
   var sourceHost: JSON = [:]
@@ -226,7 +227,7 @@ struct Interaction: Identifiable {
     }
     return (resolved,config)
   }
-  func connect(_ saved: JSON, resolution: DesktopResolution? = nil, prepared: (JSON, JSON)? = nil) async throws {
+  func connect(_ saved: JSON, resolution: DesktopResolution? = nil, prepared: (JSON, JSON)? = nil, quickConnect: Bool = false) async throws {
     let pair: (JSON,JSON)
     if let prepared { pair = prepared } else { pair = try await resolveDesktopConnection(saved) }
     let resolved = pair.0
@@ -259,6 +260,9 @@ struct Interaction: Identifiable {
     let session = MobileSession(
       id: UInt64(result.number("session")), host: config, kind: kind,
       terminal: result.text("terminal"))
+    if quickConnect, !saved.text("credentialID").isEmpty {
+      session.quickCredential = (QuickCredentialProtocol.resolve(kind: connection, mode: config.text("mode")), saved.text("credentialID"))
+    }
     session.sourceHost = saved
     session.savedHost = (records["hosts"] ?? []).contains { $0.text("id") == saved.text("id") && !saved.text("id").isEmpty }
     bindDesktopControls(session)
@@ -267,6 +271,13 @@ struct Interaction: Identifiable {
     sessions.append(session)
     selected = session.id
     try await recordConnection(session, ended: false)
+  }
+  var quickCredentials = QuickCredentialPreferences()
+  private func rememberQuickCredential(_ session: MobileSession) {
+    guard let (kind,id) = session.quickCredential else { return }
+    session.quickCredential = nil
+    guard (records["credentials"] ?? []).contains(where: { $0.text("id") == id && kind.supports(kind: $0.text("kind")) }) else { return }
+    quickCredentials.connected(kind, credentialID: id)
   }
   func recordConnection(_ s: MobileSession, ended: Bool) async throws {
     let hostID =
@@ -496,7 +507,8 @@ struct Interaction: Identifiable {
       }
     case "log":
       if id == session.id && session.receiveLatency(status: event.text("status"), message: event.text("message")) { break }
-      if event.text("status") == "connected" && event.text("channel") == "terminal" {
+      if id == session.id && event.text("status") == "connected" && event.text("channel") == "terminal" {
+        rememberQuickCredential(session)
         if !session.connected {
           session.historySucceeded = true
           attempt { try await self.recordConnection(session, ended: false) }
@@ -526,9 +538,11 @@ struct Interaction: Identifiable {
         complete(id, rid, response)
       }
     case "hostKeyPrompt", "credentialPrompt", "certificate", "approval", "form":
+      if id == session.id && type == "credentialPrompt" { session.quickCredential = nil }
       enqueue(Interaction(session: id, event: event))
     case "credentialKeySent", "vncCapabilities", "vncResizeResult": if id == session.id { session.desktopControls.receive(event) }
     case "connected", "desktopSize":
+      if id == session.id && type == "connected" { rememberQuickCredential(session) }
       let w = event.number("width"), h = event.number("height")
       if id == session.id, (1...16384).contains(w), (1...16384).contains(h) { session.desktopSize = CGSize(width:w,height:h) }
     case "status":
@@ -595,9 +609,9 @@ struct Interaction: Identifiable {
     case "automationError":
       if event.text("sessionId") == String(session.id) { session.automationWarning = event.text("message") }
     case "toolRequest": attempt { try await self.aiTool(session, event: event) }
-    case "error": if id == session.id { session.desktopControls.cancelLogin() }; error = event.text("message", event.text("code", "连接失败"))
+    case "error": if id == session.id { session.quickCredential = nil; session.desktopControls.cancelLogin() }; error = event.text("message", event.text("code", "连接失败"))
     case "sessionEnded", "disconnected", "exit":
-      if id == session.id { session.desktopControls.stop() }
+      if id == session.id { session.quickCredential = nil; session.desktopControls.stop() }
       closedSessionIDs.insert(id)
       interactionQueue.removeAll { $0.session == id }
       if interaction?.session == id {

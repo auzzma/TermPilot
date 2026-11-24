@@ -1,3 +1,4 @@
+import { QuickCredentialSettings } from "./QuickCredentialSettings";
 import { savedScriptPlan } from "../savedScript";
 import { BatchWorkspace } from "./BatchWorkspace";
 import { AISettings } from "./AISettings";
@@ -261,6 +262,7 @@ function CredentialPanel() {
       <ManagementLayout
         icon={<KeyRound size={18} />}
         title="Credentials"
+        settings={<QuickCredentialSettings />}
         description="Reusable encrypted SSH passwords and private keys."
         items={items}
         selectedId={draft.id}
@@ -2661,6 +2663,7 @@ function ManagementLayout<T extends { id: string }>({
   onSelect,
   onNew,
   onCreate,
+  settings,
   children,
 }: {
   icon: React.ReactNode;
@@ -2677,6 +2680,7 @@ function ManagementLayout<T extends { id: string }>({
   onSelect: (item: T) => void;
   onNew: () => void;
   onCreate?: () => void;
+  settings?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const t = useTranslation();
@@ -2715,6 +2719,7 @@ function ManagementLayout<T extends { id: string }>({
           </div>
         }
       />
+      {settings}
       <div className="management-split">
         <div className="management-list">
           {items.map((item) => {

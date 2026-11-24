@@ -19,6 +19,8 @@ import java.util.UUID
 @Composable fun RecordDialog(model:AppModel,collection:String,record:JSONObject,initialProfile:JSONObject?=null,isNew:Boolean=false,dismiss:()->Unit){
     var remoteProfile by remember(record){mutableStateOf(initialProfile?:JSONObject())}
     var saving by remember(record){mutableStateOf(false)}
+    var explicitUsername by remember(record){mutableStateOf(record.optString("username").isNotBlank())}
+    var credentialLabel by remember(record){mutableStateOf("") }
     var value by remember(record){mutableStateOf(JSONObject(record.toString()).apply{
         initialProfile?.let{profile->profile.keys().forEach{put(it,profile.get(it))}}
         for(key in listOf("credentialID","proxyProfileID","groupID","parentGroupID"))if(isNull(key))put(key,"")
@@ -36,7 +38,38 @@ import java.util.UUID
             if(profile!=null){remoteProfile=profile;val next=JSONObject(value.toString());profile.keys().forEach{next.put(it,profile.get(it))};value=next}
         }
     }
-    fun change(key:String,text:String){value=JSONObject(value.toString()).put(key,text)}
+    val quickProtocol=QuickCredentialProtocol.resolve(value)
+    val availableCredentials=model.records["credentials"].orEmpty().filter{quickProtocol.supports(it.optString("kind"))}
+    LaunchedEffect(quickProtocol) {
+        if(record.optBoolean("_quick")) {
+            val next=JSONObject(value.toString()).put("credentialID","").put("password","")
+            if(!explicitUsername)next.put("username","")
+            val id=model.quickCredentials.selected(quickProtocol)
+            if(id.isNotBlank()) {
+                next.put("credentialID",id)
+                val credential=availableCredentials.firstOrNull{it.optString("id")==id}
+                if(credential!=null&&!explicitUsername)next.put("username",credential.optString("username"))
+            }
+            value=next
+        }
+    }
+    fun change(key:String,text:String){
+        value=JSONObject(value.toString()).put(key,text)
+        if(key=="username")explicitUsername=true
+        if(key=="credentialID"){
+            if(record.optBoolean("_quick")&&text.isBlank()) {
+                explicitUsername=false
+                credentialLabel=""
+                value=JSONObject(value.toString()).apply {
+                    for(field in listOf("username","password","identityFile","identityKey","privateKey","publicKey","certificate","passphrase","elevationPassword"))put(field,"")
+                    put("authentication","password");put("serverToolsUseRoot",false);put("serverToolsElevationMethod","sudo")
+                }
+            }
+            if(record.optBoolean("_quick")&&!explicitUsername)availableCredentials.firstOrNull{it.optString("id")==text}?.let{credential->
+                value=JSONObject(value.toString()).put("username",credential.optString("username"))
+            }
+        }
+    }
     val groupTree=hostGroupTree(model.records["groups"].orEmpty().mapIndexed{i,g->HostGroupInfo(g.optString("id"),g.optString("name"),g.optString("parentGroupID").takeUnless{it=="null"}?:"",g.optInt("sortOrder",i))})
     var confirmDelete by remember { mutableStateOf(false) }
     FormPage(onDismissRequest={if(!saving)dismiss()},editing=true,title={Text(if(record.optBoolean("_quick"))tr("快速连接") else if(collection=="hosts")tr(if(record.has("id")&&!isNew)"编辑主机" else "添加主机") else if(!record.has("id"))tr("新增") else tr("编辑"))},text={Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(MobileDesign.sectionGap)){
@@ -52,8 +85,32 @@ import java.util.UUID
                     GroupDivider();field("IP 地址 / 主机名","hostname");GroupDivider();field("端口","port")
                 }
                 GroupedSection("认证"){
-                    Choice(tr("凭证"),value.optString("credentialID"),listOf("" to tr("手动输入"))+(model.records["credentials"]?:emptyList()).map{it.optString("id") to it.optString("label")}){change("credentialID",it)}
-                    if(value.optString("credentialID").isBlank()){GroupDivider();field("用户名","username");GroupDivider();field("密码","password",true)}
+                    val selectedCredential=value.optString("credentialID")
+                    val unavailable=if(selectedCredential.isNotBlank()&&availableCredentials.none{it.optString("id")==selectedCredential})listOf(selectedCredential to tr("凭证不可用，请重新选择。"))else emptyList()
+                    Choice(tr("凭证"),selectedCredential,listOf("" to tr("手动输入"))+unavailable+availableCredentials.map{it.optString("id") to it.optString("label")}){change("credentialID",it)}
+                    if(value.optString("credentialID").isNotBlank()&&availableCredentials.none{it.optString("id")==value.optString("credentialID")}) {
+                        Text(tr("凭证不可用，请重新选择。"),color=MaterialTheme.colorScheme.error)
+                    }
+                    if(record.optBoolean("_quick")&&value.optString("credentialID").isNotBlank()) {
+                        TextButton(onClick={model.quickCredentials.configure(quickProtocol,QuickCredentialStrategy.fixed,value.optString("credentialID"))}){Text(tr("设为此协议默认"))}
+                    }
+                    if(record.optBoolean("_quick")||value.optString("credentialID").isBlank()){
+                        GroupDivider();field("用户名","username")
+                    }
+                    if(value.optString("credentialID").isBlank()){
+                        GroupDivider();field("密码","password",true)
+                        if(record.optBoolean("_quick")&&value.optString("password").isNotBlank()) {
+                            SettingField(credentialLabel,{credentialLabel=it},label=tr("凭证名称"))
+                            TextButton(enabled=!saving&&credentialLabel.isNotBlank(),onClick={
+                                saving=true
+                                model.launch{try{
+                                    val id=UUID.randomUUID().toString()
+                                    model.save("credentials",obj("id" to id,"label" to credentialLabel.trim(),"kind" to "password","username" to value.optString("username"),"password" to value.optString("password")))
+                                    change("credentialID",id);credentialLabel=""
+                                }finally{saving=false}}
+                            }){Text(tr("保存为凭证"))}
+                        }
+                    }
                 }
                 GroupedSection("网络"){
                     Choice(tr("代理"),value.optString("proxyProfileID"),listOf("" to tr("直连"))+(model.records["proxies"]?:emptyList()).map{it.optString("id") to it.optString("label")}){change("proxyProfileID",it);if(it.isNotBlank()&&value.optString("mode")=="highPerformance")change("mode","standardVNC")}
@@ -96,7 +153,10 @@ import java.util.UUID
             if(saved.optString("label").isBlank())saved.put("label",saved.optString("hostname"))
         }
         for(key in listOf("credentialID","proxyProfileID","groupID","parentGroupID"))if(saved.optString(key).isBlank())saved.put(key,JSONObject.NULL)
-        if(record.optBoolean("_quick")){saved.remove("_quick");if(saved.optString("label").isEmpty())saved.put("label",saved.optString("hostname"));model.connect(saved);dismiss();return@launch}
+        if(record.optBoolean("_quick")){
+            val credential=saved.optString("credentialID")
+            check(credential.isBlank()||credential=="null"||availableCredentials.any{it.optString("id")==credential}){tr("凭证不可用，请重新选择。")}
+            saved.remove("_quick");if(saved.optString("label").isEmpty())saved.put("label",saved.optString("hostname"));model.connect(saved,quickConnect=true);dismiss();return@launch}
         if(collection=="forwards"){if(saved.optString("kind").isEmpty())saved.put("kind","local");if(saved.optString("localHost").isEmpty())saved.put("localHost","127.0.0.1")}
         if(collection=="proxies")saved.put("configuration",obj("type" to saved.optString("type","socks5"),"host" to saved.optString("host"),"port" to saved.optInt("port",1080),"username" to saved.optString("username"),"password" to saved.optString("password")))
         if(collection=="hosts"&&saved.optString("connectionKind")!="ssh"){
@@ -121,6 +181,7 @@ import java.util.UUID
 @Composable fun RecordListDialog(model:AppModel,collection:String,dismiss:()->Unit,edit:(JSONObject)->Unit){
     val titles=mapOf("groups" to tr("分组"),"credentials" to tr("凭证"),"proxies" to tr("代理"),"scripts" to tr("脚本"),"notes" to tr("笔记"),"forwards" to tr("端口转发"))
     FormPage(onDismissRequest=dismiss,title={Text(titles[collection]?:collection)},text={Column(Modifier.verticalScroll(rememberScrollState())){
+        if(collection=="credentials")QuickCredentialSettings(model)
         val original=model.records[collection].orEmpty()
         val groupPaths=if(collection=="groups")hostGroupOptions(hostGroupTree(original.mapIndexed{i,g->HostGroupInfo(g.optString("id"),g.optString("name"),g.optString("parentGroupID").takeUnless{it=="null"}?:"",g.optInt("sortOrder",i))})).toMap()else emptyMap()
         val records=if(collection=="groups")groupPaths.keys.mapNotNull{id->original.find{it.optString("id")==id}}else original

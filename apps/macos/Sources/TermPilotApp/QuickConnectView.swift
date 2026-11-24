@@ -68,6 +68,12 @@ struct QuickConnectView: View {
     @State private var customProxy = SSHProxyConfiguration()
     @State private var connecting = false
     @State private var credentialID: UUID?
+    @State private var explicitUsername = false
+    @State private var credentialLabel = ""
+    @State private var savingCredential = false
+    private var credentialProtocol: QuickCredentialProtocol {
+        QuickCredentialProtocol.resolve(kind: connectionKind.rawValue, mode: effectiveScreenMode.rawValue)
+    }
     @State private var credentialDetailsExpanded = false
     @State private var authentication = AuthenticationMethod.agent
     @State private var password = ""
@@ -142,7 +148,7 @@ struct QuickConnectView: View {
                     }
                     HStack(spacing: 12) {
                         formRow("Username") {
-                            TextField(connectionKind == .rdp ? "用户名或域\\用户名" : (isScreenSharing ? localized("Mac account name") : "root"), text: $username)
+                            TextField(connectionKind == .rdp ? "用户名或域\\用户名" : (isScreenSharing ? localized("Mac account name") : "root"), text: Binding(get: { username }, set: { username = $0; explicitUsername = true }))
                                 .textFieldStyle(.roundedBorder)
                                 .onSubmit(connect)
                         }
@@ -157,8 +163,7 @@ struct QuickConnectView: View {
                     formRow("Credential") {
                         Menu {
                             Button(localized("Custom Credential")) {
-                                credentialDetailsExpanded = false
-                                credentialID = nil
+                                selectCustomCredential()
                             }
                             // Use actual menu actions: macOS Picker ignores disabled Text rows.
                             // The same state.credentials array also drives Settings > Credentials.
@@ -171,7 +176,7 @@ struct QuickConnectView: View {
                                 .disabled(isScreenSharing && credential.kind != .password)
                             }
                         } label: {
-                            Text(selectedCredential.map(credentialTitle) ?? localized("Custom Credential"))
+                            Text(selectedCredential.map(credentialTitle) ?? localized(credentialID == nil ? "Custom Credential" : "Credential unavailable. Select again."))
                                 .lineLimit(1)
                         }
                         .menuStyle(.borderedButton)
@@ -179,6 +184,18 @@ struct QuickConnectView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
+                    if credentialID != nil && selectedCredential == nil { Text(localized("Credential unavailable. Select again.")).foregroundStyle(.orange) }
+                    if let selectedCredential {
+                        Button(localized("Use as protocol default")) {
+                            QuickCredentialPreferences().configure(credentialProtocol, strategy: .fixed, credentialID: selectedCredential.id.uuidString)
+                        }
+                    } else if authentication == .password && !password.isEmpty || authentication == .identityFile && !identityKey.isEmpty && identityFile.isEmpty {
+                        HStack {
+                            TextField(localized("Credential label"), text: $credentialLabel)
+                            Button(localized("Save as credential")) { saveAsCredential() }
+                                .disabled(credentialLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || savingCredential)
+                        }
+                    }
                     if credentialID != nil {
                         DisclosureGroup(isExpanded: $credentialDetailsExpanded) {
                             credentialFields.padding(.top, 10)
@@ -222,6 +239,8 @@ struct QuickConnectView: View {
         .task {
             await state.refreshCredentials()
             await state.refreshProxyProfiles()
+            explicitUsername = !username.isEmpty
+            applyDefaultCredential()
             if let profile = await state.savedScreenSharingProfile(hostID: host?.id) {
                 username = profile.username
                 if profile.effectiveMode == .rdp { rdpPortText = String(profile.port) } else { screenSharingPortText = String(profile.port) }
@@ -232,13 +251,8 @@ struct QuickConnectView: View {
             await Task.yield()
             isHostnameFocused = true
         }
-        .onChange(of: connectionKind) { _, _ in
-            // Key credentials must never become a screen-sharing password.
-            if isScreenSharing, selectedCredential?.kind == .identityKey {
-                credentialID = nil
-                password = ""
-            }
-        }
+        .onChange(of: credentialProtocol) { _, _ in applyDefaultCredential() }
+
         .onDisappear { clearSecrets() }
         .onChange(of: credentialID) { _, _ in
             credentialDetailsExpanded = false
@@ -247,7 +261,7 @@ struct QuickConnectView: View {
                 credentialID = nil
                 return
             }
-            applyCredential(selectedCredential)
+            applyCredential(selectedCredential, preserveUsername: explicitUsername)
         }
     }
 
@@ -353,12 +367,14 @@ struct QuickConnectView: View {
                 opened = await state.openScreenSharing(hostname: hostname, port: port,
                     username: username, password: password, audio: audio,
                     host: host, mode: effectiveScreenMode, proxyProfileID: proxyProfileID,
-                    proxyConfiguration: proxySelection == .custom ? customProxy : nil, credentialID: reusableID)
+                    proxyConfiguration: proxySelection == .custom ? customProxy : nil, credentialID: reusableID,
+                    rememberedCredentialID: usesSavedCredentialValues ? credentialID : nil)
             } else {
                 // The picker copies values into editable fields; use that draft,
                 // not the original vault record, when opening the connection.
                 opened = await state.quickConnect(
                     hostname: hostname, username: username, port: port,
+                    rememberedCredentialID: usesSavedCredentialValues ? credentialID : nil,
                     authentication: authentication, password: password,
                     identityFile: trimmedIdentityFile, identityKey: trimmedIdentityKey,
                     publicKey: trimmedPublicKey, certificate: trimmedCertificate,
@@ -378,6 +394,59 @@ struct QuickConnectView: View {
         }
     }
 
+    private var usesSavedCredentialValues: Bool {
+        guard let selectedCredential else { return false }
+        let fields = QuickConnectCredentialFields(credential: selectedCredential)
+        return authentication == fields.authentication && password == fields.password
+            && identityFile.isEmpty && identityKey == fields.identityKey && passphrase == fields.passphrase
+            && publicKey == fields.publicKey && certificate == fields.certificate
+    }
+
+    private func resetCredentialFields() {
+        password = ""; identityKey = ""; passphrase = ""; elevationPassword = ""
+        identityFile = ""; publicKey = ""; certificate = ""
+        credentialLabel = ""
+        authentication = isScreenSharing ? .password : .agent
+        serverToolsMode = .disabled
+    }
+
+    private func selectCustomCredential() {
+        credentialDetailsExpanded = false
+        credentialID = nil
+        explicitUsername = false
+        username = ""
+        resetCredentialFields()
+    }
+
+    private func applyDefaultCredential() {
+        let id = QuickCredentialPreferences().selectedID(credentialProtocol)
+        credentialID = nil
+        resetCredentialFields()
+        if !explicitUsername { username = "" }
+        guard !id.isEmpty else { return }
+        credentialID = UUID(uuidString: id) ?? UUID()
+        guard let saved = state.credentials.first(where: { $0.id.uuidString == id && credentialProtocol.supports(kind: $0.kind.rawValue) }) else {
+            return
+        }
+        credentialID = saved.id
+        applyCredential(saved, preserveUsername: explicitUsername)
+    }
+
+    private func saveAsCredential() {
+        let credential = SSHCredential(label: credentialLabel.trimmingCharacters(in: .whitespacesAndNewlines), username: username,
+            kind: authentication == .identityFile ? .identityKey : .password,
+            password: authentication == .password ? password : nil,
+            privateKey: authentication == .identityFile ? identityKey : nil,
+            publicKey: publicKey.isEmpty ? nil : publicKey, certificate: certificate.isEmpty ? nil : certificate,
+            passphrase: passphrase.isEmpty ? nil : passphrase, savesPassphrase: !passphrase.isEmpty)
+        savingCredential = true
+        Task {
+            await state.saveCredential(credential)
+            if state.credentials.contains(where: { $0.id == credential.id }) { credentialID = credential.id; credentialLabel = "" }
+            savingCredential = false
+        }
+    }
+
     private func clearSecrets() {
         password = ""; identityKey = ""; passphrase = ""; elevationPassword = ""
         customProxy.password = nil
@@ -385,7 +454,7 @@ struct QuickConnectView: View {
 
     private var selectedCredential: SSHCredential? {
         guard let credentialID else { return nil }
-        return state.credentials.first { $0.id == credentialID }
+        return state.credentials.first { $0.id == credentialID && credentialProtocol.supports(kind: $0.kind.rawValue) }
     }
 
     private var port: Int? {
@@ -424,7 +493,7 @@ struct QuickConnectView: View {
     }
 
     private var canConnect: Bool {
-        guard !connecting, proxyValidationMessage == nil else { return false }
+        guard !connecting, !savingCredential, proxyValidationMessage == nil, credentialID == nil || selectedCredential != nil else { return false }
         if isScreenSharing {
             guard selectedCredential?.kind != .identityKey else { return false }
             return (effectiveScreenMode == .standardVNC || !password.isEmpty) && ScreenSharingEndpoint.isValid(
@@ -605,9 +674,9 @@ struct QuickConnectView: View {
         "\(credential.label) [\(credential.kind.appLocalizedTitle)]"
     }
 
-    private func applyCredential(_ credential: SSHCredential) {
+    private func applyCredential(_ credential: SSHCredential, preserveUsername: Bool = false) {
         let fields = QuickConnectCredentialFields(credential: credential)
-        username = fields.username
+        if !preserveUsername { username = fields.username }
         authentication = fields.authentication
         password = fields.password
         identityFile = ""
@@ -628,9 +697,8 @@ struct QuickConnectView: View {
             return
         }
         hostname = target.hostname
-        if username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            username = target.username
-        }
+        username = target.username
+        explicitUsername = true
         sshPortText = String(target.port)
     }
 }

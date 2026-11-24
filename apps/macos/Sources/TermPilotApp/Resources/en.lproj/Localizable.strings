@@ -1253,3 +1253,15 @@
 "The script contains terminal control characters." = "The script contains terminal control characters.";
 "Enable bracketed paste in the current shell to use this script." = "Enable bracketed paste in the current shell to use this script.";
 "Wait for a connected shell prompt." = "Wait for a connected shell prompt.";
+
+"Quick Connect Credentials" = "Quick Connect Credentials";
+"Credential strategy" = "Credential strategy";
+"Choose each time" = "Choose each time";
+"Remember last successful credential" = "Remember last successful credential";
+"Fixed credential" = "Fixed credential";
+"Use as protocol default" = "Use as protocol default";
+"Credential unavailable. Select again." = "Credential unavailable. Select again.";
+"Save as credential" = "Save as credential";
+"Could not save credential preferences." = "Could not save credential preferences.";
+"Apple High Performance" = "Apple High Performance";
+"Standard VNC" = "Standard VNC";

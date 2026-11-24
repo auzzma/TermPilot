@@ -7713,6 +7713,16 @@ body.is-dragging-tab {
   background: var(--accent);
 }
 
+.management-panel:has(> .quick-credential-settings) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.quick-credential-settings {
+  max-height: min(360px, 40vh);
+  overflow-y: auto;
+  margin: 0 16px 16px;
+}
+
 .management-panel .management-split {
   grid-template-columns: minmax(280px, 1fr);
   min-height: 0;

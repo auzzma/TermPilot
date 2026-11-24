@@ -71,7 +71,7 @@ struct RootView: View {
     .sheet(item: $edit, onDismiss: {
       guard let host = pendingQuickConnection else { return }
       pendingQuickConnection = nil
-      model.attempt { try await model.connect(host) }
+      model.attempt { try await model.connect(host, quickConnect: true) }
     }) { item in
       RecordEditor(item: item, onQuickConnect: { host in
         // Wait for the editor to finish dismissing before a fast connection

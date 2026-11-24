@@ -1,3 +1,4 @@
+import { finishQuickCredential } from "./quickCredentials";
 import type { SavedScriptPlan } from "./savedScript";
 import { create } from "zustand";
 import { DeferredWrite } from "./deferredWrite";
@@ -731,6 +732,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     persistWorkspace(get);
   },
   setSessionLifecycle: (id, lifecycle) => {
+    finishQuickCredential(id, lifecycle, get().credentials);
     set((state) => {
       const session = state.workspace.sessions.find(
         (item) => item.id === id,
@@ -948,6 +950,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     persistWorkspace(get);
   },
   closeSession: (workspaceId, sessionId) => {
+    finishQuickCredential(sessionId, "disconnected", get().credentials);
     set((state) => {
       const workspaces = state.workspace.workspaces
         .map((workspace) => {

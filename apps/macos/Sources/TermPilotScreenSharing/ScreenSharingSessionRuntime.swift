@@ -76,6 +76,7 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
     @Published public private(set) var isEnteringLoginPassword = false
     @Published public private(set) var loginPasswordStatus = ""
     @Published public var audioEnabled: Bool
+    public var onAuthenticated: (() -> Void)?
     public var onMediaServiceInterrupted: (() -> Void)?
     public var onFileTransferChange: ((ScreenSharingFileTransfer) -> Void)?
     @Published public private(set) var fileTransfers: [ScreenSharingFileTransfer] = []
@@ -642,6 +643,7 @@ public final class ScreenSharingSessionRuntime: ObservableObject {
         case "clipboardError": status = event.message ?? "文件剪贴板错误"; rdpClipboard.failed()
         case "connected":
             updateDesktopSize(event)
+            onAuthenticated?()
             lifecycle = .connected; decoderName = event.decoder ?? ""; status = ""
             startClipboardSync()
             startPerformanceUpdates()

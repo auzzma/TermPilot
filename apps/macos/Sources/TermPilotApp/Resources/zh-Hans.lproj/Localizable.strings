@@ -1307,3 +1307,15 @@
 "The script contains terminal control characters." = "脚本包含终端控制字符，请移除后再试。";
 "Enable bracketed paste in the current shell to use this script." = "请在当前 Shell 中启用括号粘贴，以便整段插入此脚本。";
 "Wait for a connected shell prompt." = "请在终端已连接并显示命令提示符后重试。";
+
+"Quick Connect Credentials" = "快速连接凭证";
+"Credential strategy" = "凭证使用方式";
+"Choose each time" = "每次选择";
+"Remember last successful credential" = "记住上次成功使用的凭证";
+"Fixed credential" = "固定凭证";
+"Use as protocol default" = "设为此协议默认";
+"Credential unavailable. Select again." = "凭证不可用，请重新选择。";
+"Save as credential" = "保存为凭证";
+"Could not save credential preferences." = "无法保存凭证偏好设置。";
+"Apple High Performance" = "Apple 高性能";
+"Standard VNC" = "普通 VNC";

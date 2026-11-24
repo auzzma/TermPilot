@@ -14,6 +14,7 @@ import java.io.File
 import java.util.UUID
 
 class Session(val id:Long,val host:JSONObject,val protocol:String,val terminal:String) {
+    var quickCredential: Pair<QuickCredentialProtocol,String>? = null
     internal val commandQueue=SessionCommandQueue()
     internal val desktopControls=MobileDesktopControls()
     internal var sourceHost=host
@@ -84,6 +85,7 @@ class Session(val id:Long,val host:JSONObject,val protocol:String,val terminal:S
 }
 data class Prompt(val session:Long,val event:JSONObject)
 class AppModel(app:Application):AndroidViewModel(app) {
+    val quickCredentials = QuickCredentialPreferences(app.getSharedPreferences("TermPilot",0))
     var runtime:MobileRuntime?=null; private set
     val records=mutableStateMapOf<String,List<JSONObject>>()
     val sessions=mutableStateListOf<Session>()
@@ -151,7 +153,7 @@ class AppModel(app:Application):AndroidViewModel(app) {
         if(host.opt("credentialID") is String&&host.optString("credentialID").isNotEmpty())config.put("username",host.optString("username")).put("password",host.opt("password"))
         return host to config
     }
-    internal suspend fun connect(saved:JSONObject,resolution:DesktopResolution?=null,prepared:Pair<JSONObject,JSONObject>?=null){
+    internal suspend fun connect(saved:JSONObject,resolution:DesktopResolution?=null,prepared:Pair<JSONObject,JSONObject>?=null,quickConnect:Boolean=false){
         val (host,config)=prepared?:resolveDesktopConnection(saved)
         val kind=when(host.optString("connectionKind","ssh")){"screenSharing"->"screen";"rdp"->"rdp";else->"ssh"}
         config.put("host",host.optString("hostname")).put("proxy",host.opt("proxyConfiguration"))
@@ -165,9 +167,19 @@ class AppModel(app:Application):AndroidViewModel(app) {
         val command=if(kind=="ssh")obj("type" to "connect","config" to config,"cols" to 80,"rows" to 24) else config.put("kind","connect")
         val reply=call(obj("method" to "session.open","protocol" to kind,"terminalReplies" to true,"command" to command))
         val session=Session(reply.getLong("session"),config,kind,reply.optString("terminal"))
+        if(quickConnect && saved.optString("credentialID").isNotBlank() && saved.optString("credentialID")!="null") {
+            session.quickCredential=QuickCredentialProtocol.resolve(saved) to saved.optString("credentialID")
+        }
         session.sourceHost=JSONObject(saved.toString());session.savedHost=records["hosts"]?.any{it.optString("id")==saved.optString("id")&&saved.optString("id").isNotEmpty()}==true
         bindDesktopControls(session)
         sessions.add(session);selected=session.id;recordConnection(session,false)
+    }
+    private fun rememberQuickCredential(session:Session) {
+        val selection=session.quickCredential ?: return
+        session.quickCredential=null
+        if(records["credentials"].orEmpty().any{it.optString("id")==selection.second && selection.first.supports(it.optString("kind"))}) {
+            quickCredentials.connected(selection.first,selection.second)
+        }
     }
     suspend fun recordConnection(s:Session,ended:Boolean){
         val hostID=s.host.optString("id").takeIf{id->records["hosts"]?.any{it.optString("id")==id}==true}
@@ -237,13 +249,13 @@ class AppModel(app:Application):AndroidViewModel(app) {
         when(e.optString("type",e.optString("kind"))){
             "data"->{s.terminalRevision++;s.snapshot=call(obj("method" to "terminal.snapshot","id" to s.terminal));s.ai?.let{ai->send(ai,obj("id" to UUID.randomUUID().toString(),"method" to "terminal.output","params" to obj("sessionId" to s.id.toString(),"data" to e.optString("data"))))}}
             "log"->if(id==s.id&&s.receiveLatency(e.optString("status"),e.optString("message"))){ /* Transient connection metric; never terminal output. */ }
-            else if(e.optString("status")=="connected"&&e.optString("channel")=="terminal"){if(!s.connected){s.historySucceeded=true;launch{recordConnection(s,false)}};s.connected=true;s.status="已连接";send(id,obj("type" to "sftpOpen","config" to JSONObject()));send(id,obj("type" to "execOpen","config" to JSONObject()))}
+            else if(id==s.id&&e.optString("status")=="connected"&&e.optString("channel")=="terminal"){rememberQuickCredential(s);if(!s.connected){s.historySucceeded=true;launch{recordConnection(s,false)}};s.connected=true;s.status="已连接";send(id,obj("type" to "sftpOpen","config" to JSONObject()));send(id,obj("type" to "execOpen","config" to JSONObject()))}
             "sftpReady"->{s.filesReady=true;launch{list(s)}}
             "execReady"->s.execReady=true
             "sftpResponse"->{val r=e.getJSONObject("message");val rid=r.optString("id");if(r.optString("event")=="progress"){backgroundTransfers[rid]?.report(r.optLong("transferred"),r.optLong("total"));s.transfers[rid]?.let{old->s.transfers[rid]=JSONObject(old.toString()).put("total",r.optLong("total")).put("transferred",r.optLong("transferred")).put("rate",s.transferRate(rid,r.optLong("transferred")))}}else complete(id,rid,r)}
-            "hostKeyPrompt","credentialPrompt","certificate","approval","form"->{val p=Prompt(id,e);if(prompt==null)prompt=p else prompts.addLast(p)}
+            "hostKeyPrompt","credentialPrompt","certificate","approval","form"->{if(id==s.id&&e.optString("type",e.optString("kind"))=="credentialPrompt")s.quickCredential=null;val p=Prompt(id,e);if(prompt==null)prompt=p else prompts.addLast(p)}
             "credentialKeySent","vncCapabilities","vncResizeResult"->if(id==s.id)s.desktopControls.receive(e)
-            "connected","desktopSize"->if(id==s.id)s.receiveDesktopSize(e)
+            "connected","desktopSize"->if(id==s.id){if(e.optString("type",e.optString("kind"))=="connected")rememberQuickCredential(s);s.receiveDesktopSize(e)}
             "status"->s.status=e.optString("stage")
             "frame"->{if(!s.frames.publish(packet))return;s.lastFrameAt=System.nanoTime();if(e.optString("pixelFormat")=="bgrx")s.receiveDesktopSize(obj("width" to e.optInt("desktopWidth",e.optInt("width")),"height" to e.optInt("desktopHeight",e.optInt("height"))));if(!s.connected){s.historySucceeded=true;launch{recordConnection(s,false)}};s.connected=true;s.status="已连接"}
             "audio"->if(isForeground&&s.id==selected&&s.audioEnabled)s.audio.append(packet.payload)
@@ -258,8 +270,8 @@ class AppModel(app:Application):AndroidViewModel(app) {
             "clipboardChanged"->send(id,obj("kind" to "clipboardFetch","requestID" to UUID.randomUUID().toString()))
             "clipboard"->s.remoteClipboard=e.optString("text",String(packet.payload))
             "clipboardFiles"->{val paths=e.optJSONArray("paths")?:JSONArray(String(packet.payload));for(i in 0 until paths.length())s.downloads.add(File(paths.getString(i)));recordReceivedFiles(s,(0 until paths.length()).map{paths.getString(it)})}
-            "error"->{if(id==s.id)s.desktopControls.cancelLogin();error=e.optString("message",e.optString("code","连接失败"))}
-            "sessionEnded","disconnected","exit"->{if(id==s.id)s.desktopControls.stop();launch{recordConnection(s,true)};endRemoteTransfers(s);s.audio.stop();s.connected=false;s.latencyMilliseconds=null;s.status="已断开";pending.filterKeys{it.startsWith("$id:")}.values.forEach{it.completeExceptionally(IllegalStateException("连接已断开，操作不会自动重试"))}}
+            "error"->{if(id==s.id){s.quickCredential=null;s.desktopControls.cancelLogin()};error=e.optString("message",e.optString("code","连接失败"))}
+            "sessionEnded","disconnected","exit"->{if(id==s.id){s.quickCredential=null;s.desktopControls.stop()};launch{recordConnection(s,true)};endRemoteTransfers(s);s.audio.stop();s.connected=false;s.latencyMilliseconds=null;s.status="已断开";pending.filterKeys{it.startsWith("$id:")}.values.forEach{it.completeExceptionally(IllegalStateException("连接已断开，操作不会自动重试"))}}
         }
     }
     private fun complete(session:Long,id:String,response:JSONObject){pending.remove("$session:$id")?.let{if(response.optBoolean("ok"))it.complete(response.optJSONObject("result")?:JSONObject().put("items",response.opt("result")))else it.completeExceptionally(IllegalStateException(response.optString("error","操作失败")))}}

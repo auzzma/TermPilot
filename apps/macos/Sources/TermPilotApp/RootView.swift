@@ -2847,6 +2847,7 @@ private struct SettingsSurfaceView: View {
 
     private var credentialsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
+            QuickCredentialSettings()
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Credentials")

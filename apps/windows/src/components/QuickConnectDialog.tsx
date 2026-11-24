@@ -1,3 +1,4 @@
+import { configureQuickCredential, quickCredentialProtocol, selectedQuickCredential, supportsQuickCredential, trackQuickCredential } from "../quickCredentials";
 import { QuickProxy } from "./QuickProxy";
 import type { ProxyConfiguration } from "../types";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -47,11 +48,17 @@ export function QuickConnectDialog() {
   const [serverToolsMode, setServerToolsMode] =
     useState<ServerToolsMode>("disabled");
   const [elevationPassword, setElevationPassword] = useState("");
+  const explicitUsername = useRef(false);
+  const [saveLabel, setSaveLabel] = useState("");
+  const [saving, setSaving] = useState(false);
+  const credentialProtocol = quickCredentialProtocol(protocol, screenMode);
   const [error, setError] = useState<string>();
 
   useEffect(() => {
     const show = (event: Event) => {
       const initialTarget = (event as CustomEvent<string>).detail ?? "";
+      explicitUsername.current = false;
+      setSaveLabel("");
       setVisible(true);
       setError(undefined);
       setHostname(initialTarget);
@@ -76,6 +83,7 @@ export function QuickConnectDialog() {
         if (target) {
           setHostname(target.hostname);
           setUsername(target.username);
+          explicitUsername.current = true;
           setPort(String(target.port));
         }
       }
@@ -84,6 +92,15 @@ export function QuickConnectDialog() {
     window.addEventListener(QUICK_CONNECT_EVENT, show);
     return () => window.removeEventListener(QUICK_CONNECT_EVENT, show);
   }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    const selected = selectedQuickCredential(credentialProtocol);
+    const credential = useAppStore.getState().credentials.find(c => c.id === selected && supportsQuickCredential(credentialProtocol, c));
+    selectCredential(credential?.id ?? "", true);
+    if (selected && !credential) setCredentialId(selected);
+    setError(undefined);
+  }, [visible, credentialProtocol]);
 
   function close() {
     setVisible(false);
@@ -98,18 +115,28 @@ export function QuickConnectDialog() {
     const target = parseQuickConnectTarget(value);
     if (!target) return;
     setHostname(target.hostname);
-    if (!username.trim()) setUsername(target.username);
+    setUsername(target.username);
+    explicitUsername.current = true;
     setPort(String(target.port));
   }
 
-  function selectCredential(nextCredentialId: string) {
+  function selectCredential(nextCredentialId: string, automatic = false) {
+    setError(undefined);
     setDetailsOpen(false);
     setCredentialId(nextCredentialId);
-    const credential = credentials.find((item) => item.id === nextCredentialId);
+    const credential = useAppStore.getState().credentials.find((item) => item.id === nextCredentialId);
+    if (!nextCredentialId && !automatic) {
+      explicitUsername.current = false;
+      setSaveLabel("");
+    }
+    setPassword(""); setIdentityFile(""); setIdentityKey(""); setPublicKey("");
+    setCertificate(""); setPassphrase(""); setElevationPassword(""); setServerToolsMode("disabled");
+    setAuthentication(credentialProtocol === "ssh" ? "agent" : "password");
+    if (!explicitUsername.current) setUsername("");
     if (!credential) return;
 
     const fields = quickConnectCredentialFields(credential);
-    setUsername(fields.username);
+    if (!explicitUsername.current) setUsername(fields.username);
     setAuthentication(fields.authentication);
     setPassword(fields.password);
     setIdentityFile("");
@@ -122,7 +149,34 @@ export function QuickConnectDialog() {
     setError(undefined);
   }
 
+  const selectedCredential = credentials.find(c => c.id === credentialId && supportsQuickCredential(credentialProtocol, c));
+  const credentialMissing = !!credentialId && !selectedCredential;
+  const usesSavedValues = !!selectedCredential &&
+    quickConnectCredentialFields(selectedCredential).authentication === authentication &&
+    (authentication === "password" ? selectedCredential.password === password :
+      selectedCredential.privateKey === identityKey && (selectedCredential.passphrase ?? "") === passphrase &&
+      (selectedCredential.publicKey ?? "") === publicKey && (selectedCredential.certificate ?? "") === certificate && !identityFile);
+
+  async function saveAsCredential() {
+    if (!saveLabel.trim() || saving) return;
+    setSaving(true);
+    const id = crypto.randomUUID();
+    const timestamp = now();
+    try {
+      await useAppStore.getState().saveCredential({ id, label: saveLabel.trim(), username,
+        kind: authentication === "identityFile" ? "identityKey" : "password",
+        password: authentication === "password" ? password : undefined,
+        privateKey: authentication === "identityFile" ? identityKey : undefined,
+        publicKey: publicKey || undefined, certificate: certificate || undefined, passphrase: passphrase || undefined,
+        savesPassphrase: !!passphrase, createdAt: timestamp, updatedAt: timestamp });
+      setCredentialId(id); setSaveLabel(""); setError(undefined);
+    } catch (reason) { setError(String(reason)); }
+    finally { setSaving(false); }
+  }
+
   async function submit() {
+    if (saving) return;
+    if (credentialMissing) { setError(t("Credential unavailable. Select again.")); return; }
     const parsedPort = Number(port);
     const connectionFields = quickConnectConnectionFields({
       username,
@@ -200,7 +254,8 @@ export function QuickConnectDialog() {
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    connect(host, undefined, undefined, true);
+    const session = connect(host, undefined, undefined, true);
+    if (usesSavedValues) trackQuickCredential(session.id, credentialProtocol, credentialId);
     close();
   }
 
@@ -257,7 +312,7 @@ export function QuickConnectDialog() {
               <input
                 placeholder="root"
                 value={username}
-                onChange={(event) => setUsername(event.target.value)}
+                onChange={(event) => { explicitUsername.current = true; setUsername(event.target.value); }}
               />
             </label>
             <label className="quick-connect-row quick-connect-port-row">
@@ -276,6 +331,7 @@ export function QuickConnectDialog() {
               onChange={(event) => selectCredential(event.target.value)}
             >
               <option value="">{t("Custom Credential")}</option>
+              {credentialMissing && <option value={credentialId} disabled>{t("Credential unavailable. Select again.")}</option>}
               {credentials
                 .filter((c) => protocol === "ssh" || c.kind === "password")
                 .map((credential) => (
@@ -292,6 +348,15 @@ export function QuickConnectDialog() {
             </select>
           </label>
 
+          {credentialMissing && <p role="alert">{t("Credential unavailable. Select again.")}</p>}
+          {selectedCredential && <button type="button" onClick={() => {
+            try { configureQuickCredential(credentialProtocol, "fixed", credentialId); setError(undefined); }
+            catch { setError(t("Could not save credential preferences.")); }
+          }}>{t("Use as protocol default")}</button>}
+          {!credentialId && ((authentication === "password" && password) || (authentication === "identityFile" && identityKey && !identityFile)) && <div className="quick-connect-row">
+            <input aria-label={t("Credential label")} placeholder={t("Credential label")} value={saveLabel} onChange={e => setSaveLabel(e.target.value)} />
+            <button type="button" disabled={!saveLabel.trim() || saving} onClick={() => void saveAsCredential()}>{t("Save as credential")}</button>
+          </div>}
           {credentialId && <button type="button" className="quick-detail-toggle" aria-expanded={detailsOpen} onClick={()=>setDetailsOpen(!detailsOpen)}>
             <KeyRound size={13}/>{t("Credential Details")} {detailsOpen ? "▴" : "▾"}
           </button>}

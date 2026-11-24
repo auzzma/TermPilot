@@ -405,6 +405,13 @@ final class AppState: ObservableObject {
     @Published private(set) var hosts: [TermPilotDomain.Host] = []
     @Published private(set) var groups: [HostGroup] = []
     @Published private(set) var credentials: [SSHCredential] = []
+    private var quickCredentialAttempts: [UUID: (QuickCredentialProtocol, UUID)] = [:]
+
+    private func rememberQuickCredential(sessionID: UUID) {
+        guard let (kind, id) = quickCredentialAttempts.removeValue(forKey: sessionID),
+              let credential = credentials.first(where: { $0.id == id }), kind.supports(kind: credential.kind.rawValue) else { return }
+        QuickCredentialPreferences().connected(kind, credentialID: id.uuidString)
+    }
     @Published private(set) var recentHosts: [TermPilotDomain.Host] = []
     @Published private(set) var proxyProfiles: [SSHProxyProfile] = []
     @Published private(set) var workspaces: [WorkspaceDocument] = []
@@ -2354,6 +2361,7 @@ final class AppState: ObservableObject {
         username rawUsername: String,
         port: Int,
         credentialID: UUID? = nil,
+        rememberedCredentialID: UUID? = nil,
         authentication: AuthenticationMethod = .agent,
         password: String? = nil,
         identityFile: String? = nil,
@@ -2423,7 +2431,7 @@ final class AppState: ObservableObject {
                 credentials: credentials,
                 proxyProfiles: proxyProfiles
             )
-            try await openSSHSession(host: resolvedHost)
+            try await openSSHSession(host: resolvedHost, rememberedCredentialID: rememberedCredentialID)
             return true
         } catch {
             presentedError = AppLocalization.errorDescription(error)
@@ -3030,6 +3038,7 @@ final class AppState: ObservableObject {
             await recordHistoryIfNeeded(descriptor: descriptor, exitCode: 143)
         }
         runtimes.removeValue(forKey: sessionID)
+        quickCredentialAttempts.removeValue(forKey: sessionID)
         sessions.removeValue(forKey: sessionID)
         sessionHosts.removeValue(forKey: sessionID)
         automaticSystemOverviewSuppressedSessionIDs.remove(sessionID)
@@ -3058,6 +3067,7 @@ final class AppState: ObservableObject {
                 await recordHistoryIfNeeded(descriptor: descriptor, exitCode: 143)
             }
             runtimes.removeValue(forKey: sessionID)
+            quickCredentialAttempts.removeValue(forKey: sessionID)
             sessions.removeValue(forKey: sessionID)
             sessionHosts.removeValue(forKey: sessionID)
             automaticSystemOverviewSuppressedSessionIDs.remove(sessionID)
@@ -3102,6 +3112,7 @@ final class AppState: ObservableObject {
         screenSharingRuntimes.values.forEach { $0.disconnect() }
         screenSharingRuntimes.removeAll()
         runtimes.removeAll()
+        quickCredentialAttempts.removeAll()
         sessions.removeAll()
         sessionHosts.removeAll()
         automaticSystemOverviewSuppressedSessionIDs.removeAll()
@@ -3694,7 +3705,8 @@ final class AppState: ObservableObject {
         host: TermPilotDomain.Host,
         splitAxis: SplitAxis? = nil,
         connectionID: UUID = UUID(),
-        sourceDescriptor: SessionDescriptor? = nil
+        sourceDescriptor: SessionDescriptor? = nil,
+        rememberedCredentialID: UUID? = nil
     ) async throws -> UUID {
         await prepareForSplitIfNeeded(splitAxis: splitAxis)
         let host = try host.applyingConnectionSettings(
@@ -3715,6 +3727,7 @@ final class AppState: ObservableObject {
             throw CancellationError()
         }
         sessionHosts[descriptor.id] = host
+        if let rememberedCredentialID { quickCredentialAttempts[descriptor.id] = (.ssh, rememberedCredentialID) }
         await addSession(
             descriptor,
             runtime: runtime,
@@ -4051,6 +4064,7 @@ final class AppState: ObservableObject {
                 }
                 switch record.lifecycle {
                 case .connected:
+                    self?.rememberQuickCredential(sessionID: record.descriptor.id)
                     self?.reconnectVisibleSFTPConnections(
                         sharing: record.descriptor
                     )
@@ -4064,12 +4078,14 @@ final class AppState: ObservableObject {
                     await self?.refreshKnownHosts()
                     await self?.detectHostDistro(for: record.descriptor)
                 case let .exited(code):
+                    self?.quickCredentialAttempts.removeValue(forKey: record.descriptor.id)
                     self?.knownHostRefreshSessionIDs.remove(record.descriptor.id)
                     await self?.recordHistoryIfNeeded(
                         descriptor: record.descriptor,
                         exitCode: code
                     )
                 case .connecting, .disconnected, .failed:
+                    if record.lifecycle != .connecting { self?.quickCredentialAttempts.removeValue(forKey: record.descriptor.id) }
                     self?.knownHostRefreshSessionIDs.remove(record.descriptor.id)
                 }
             }
@@ -4375,7 +4391,8 @@ final class AppState: ObservableObject {
     func openScreenSharing(hostname: String, port: Int, username: String, password: String,
                            audio: Bool, host: TermPilotDomain.Host?, mode: ScreenSharingMode = .highPerformance,
                            proxyProfileID: UUID? = nil,
-                           proxyConfiguration: SSHProxyConfiguration? = nil, credentialID: UUID? = nil) async -> Bool {
+                           proxyConfiguration: SSHProxyConfiguration? = nil, credentialID: UUID? = nil,
+                           rememberedCredentialID: UUID? = nil) async -> Bool {
         let hostname = hostname.trimmingCharacters(in: .whitespacesAndNewlines)
         let username = username.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ScreenSharingEndpoint.isValid(host: hostname, port: port, username: username, mode: mode),
@@ -4402,6 +4419,14 @@ final class AppState: ObservableObject {
         descriptor.credentialID = credentialID
         let runtime = ScreenSharingSessionRuntime(descriptor: descriptor, proxyConfiguration: resolvedProxy,
             quickConnectPassword: credentialID == nil ? password : nil)
+        if let rememberedCredentialID {
+            let kind = QuickCredentialProtocol.resolve(kind: mode == .rdp ? "rdp" : "screenSharing", mode: mode.rawValue)
+            runtime.onAuthenticated = { [weak self, weak runtime] in
+                guard let self, let runtime, self.screenSharingRuntimes[descriptor.id] === runtime else { return }
+                self.rememberQuickCredential(sessionID: descriptor.id)
+            }
+            quickCredentialAttempts[descriptor.id] = (kind, rememberedCredentialID)
+        }
         await addScreenSharingSession(descriptor, splitAxis: nil, runtime: runtime)
         startScreenSharing(runtime, password: password, proxy: resolvedProxy)
         return true
@@ -4439,6 +4464,7 @@ final class AppState: ObservableObject {
 
     func disconnectScreenSharing(sessionID: UUID) {
         screenConnectionRequests.removeValue(forKey: sessionID)
+        quickCredentialAttempts.removeValue(forKey: sessionID)
         screenSharingRuntimes[sessionID]?.disconnect()
     }
 
